@@ -115,9 +115,13 @@ export function ResultsView({
           </ul>
         </aside>
       ) : null}
-      <h3>{parts.length === 0 ? 'Nothing in the active types' : 'Hotspots, highest value potential first'}</h3>
+      <h3>{parts.length === 0 ? (analysis.outcome === 'candidates' ? 'Nothing in the active types' : 'No parts marked') : 'Hotspots, highest value potential first'}</h3>
       {parts.length === 0 ? (
-        <p className="empty">No likely candidates match the switches that are on. Turn a type back on, or rescan if it was off when the photo was sent.</p>
+        <p className="empty">
+          {analysis.outcome === 'candidates'
+            ? 'No likely candidates match the switches that are on. Turn a type back on, or rescan if it was off when the photo was sent.'
+            : 'GoldSpotter did not mark any parts in this photo. Follow the tips above and try another shot.'}
+        </p>
       ) : (
         <ol className="part-list">
           {parts.map((part, index) => (
@@ -154,12 +158,16 @@ export function ResultsView({
         <p className="hint">A type you just turned on was not sent with this photo. Scan again to look for it.</p>
       ) : null}
       <ScanTypeSwitches types={scanTypes} hint={typeHint} onToggle={onToggleType} />
-      <h3>Recovery</h3>
-      <ul className="tips recovery">
-        {analysis.recovery_tips.map((tip) => (
-          <li key={tip}>{tip}</li>
-        ))}
-      </ul>
+      {analysis.outcome === 'candidates' ? (
+        <>
+          <h3>Recovery</h3>
+          <ul className="tips recovery">
+            {analysis.recovery_tips.map((tip) => (
+              <li key={tip}>{tip}</li>
+            ))}
+          </ul>
+        </>
+      ) : null}
       <div className="actions">
         <button type="button" className="btn btn-primary" onClick={onShare} disabled={sharing}>
           {sharing ? 'Making the card…' : 'Share result card'}
