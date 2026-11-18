@@ -1,0 +1,33 @@
+{
+  "name": "goldspotter",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Photo scanner that marks circuit-board parts likely to carry recoverable precious metals.",
+  "license": "MIT",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "dev": "concurrently -n server,web -c yellow,cyan \"tsx watch src/server/index.ts\" \"vite\"",
+    "build": "tsc -p tsconfig.client.json && tsc -p tsconfig.server.json && vite build",
+    "start": "node dist/server/index.js",
+    "test": "tsx --test test/validate.test.ts test/interpret.test.ts test/image.test.ts test/rateLimit.test.ts test/scanTypes.test.ts",
+    "typecheck": "tsc -p tsconfig.client.json && tsc -p tsconfig.server.json"
+  },
+  "dependencies": {
+    "express": "^4.21.2",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0"
+  },
+  "devDependencies": {
+    "@types/express": "^4.17.21",
+    "@types/node": "^22.10.2",
+    "@types/react": "^19.0.2",
+    "@types/react-dom": "^19.0.2",
+    "@vitejs/plugin-react": "^4.3.4",
+    "concurrently": "^9.1.2",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.3",
+    "vite": "^6.0.6"
+  }
+}
