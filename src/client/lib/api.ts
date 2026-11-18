@@ -23,7 +23,7 @@ export async function analyzePhoto(base64: string, mimeType: string, signal: Abo
   if (!response.ok) {
     throw new Error(payload.error || 'The scan failed.');
   }
-  if (!payload.grade || !payload.verdict || !payload.components) {
+  if (!payload.outcome || !payload.verdict || !Array.isArray(payload.components)) {
     throw new Error('The scanner returned an incomplete result.');
   }
   return payload as Analysis;

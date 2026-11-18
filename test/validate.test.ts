@@ -72,6 +72,18 @@ test('rejects a missing grade and an empty verdict', () => {
   assert.equal(validateAnalysis(payload({ verdict: '   ' })).ok, false);
 });
 
+test('keeps a normal AR mention and still strips aqua regia', () => {
+  const kept = validateAnalysis(payload({ verdict: 'The AR coating on the mask is not metal.' }));
+  assert.equal(kept.ok, true);
+  if (!kept.ok) return;
+  assert.match(kept.value.verdict, /AR coating/);
+
+  const stripped = validateAnalysis(payload({ verdict: 'Use aqua regia on the fingers.' }));
+  assert.equal(stripped.ok, true);
+  if (!stripped.ok) return;
+  assert.match(stripped.value.verdict, /do not chemically refine/i);
+});
+
 test('drops unsafe refining tips and replaces an unsafe verdict', () => {
   const result = validateAnalysis(
     payload({

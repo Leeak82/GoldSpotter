@@ -34,6 +34,9 @@ app.post(
   async (req, res, next) => {
     try {
       const ip = req.ip || req.socket.remoteAddress || 'unknown';
+      if (ip === 'unknown') {
+        console.warn('[goldspotter] no client IP on this request; those scans share one rate-limit bucket');
+      }
       if (!limiter.allow(ip)) {
         res.setHeader('Retry-After', String(Math.ceil(RATE_WINDOW_MS / 1000)));
         res.status(429).json({

@@ -81,7 +81,7 @@ const TYPE_ALIASES: Record<string, ComponentType> = {
 
 /** Chemical refining language is stripped even if a model volunteers it. */
 const UNSAFE =
-  /aqua\s*regia|\bAR\b|nitric|cyanide|\bNaCN\b|mercury|hydrochloric|muriatic|sulfuric|\bHNO3\b|\bHCl\b|bleach|hydrogen peroxide|electrolys|dissolve the|acid/i;
+  /aqua\s*regia|nitric|cyanide|\bNaCN\b|mercury|hydrochloric|muriatic|sulfuric|\bHNO3\b|\bHCl\b|bleach|hydrogen peroxide|electrolys|dissolve the|acid/i;
 
 export function parseModelOutput(raw: string): unknown {
   let text = raw.trim();
