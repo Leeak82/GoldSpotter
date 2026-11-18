@@ -132,13 +132,21 @@ export function App() {
     setError(null);
     setScreen('working');
     replace('/scan');
+    const leaveIfCancelled = () => {
+      if (id !== runRef.current) return true;
+      if (!controller.signal.aborted) return false;
+      setScreen('landing');
+      replace('/');
+      return true;
+    };
     try {
       const uploaded = await compressImage(file);
-      if (controller.signal.aborted || id !== runRef.current) return;
+      if (leaveIfCancelled()) return;
       setPreviewUrl(uploaded.dataUrl);
       const thumb = await compressImage(uploaded.blob, { maxEdge: 720, quality: 0.6, maxBytes: 160_000 });
+      if (leaveIfCancelled()) return;
       const result = await analyzePhoto(uploaded.base64, uploaded.mimeType, controller.signal, sent);
-      if (id !== runRef.current) return;
+      if (leaveIfCancelled()) return;
       setAnalysis(result);
       setScannedTypes(sent);
       const saved = saveHistory({ imageDataUrl: thumb.dataUrl, analysis: result, scanTypes: sent });

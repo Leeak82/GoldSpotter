@@ -78,7 +78,7 @@ export function componentCategories(component: Pick<Component, 'type' | 'preciou
   if (component.type === 'mlcc' || metals.has('palladium')) categories.push('palladium');
   if (metals.has('platinum')) categories.push('platinum');
   if (component.type === 'tantalum_capacitor' || metals.has('tantalum')) categories.push('tantalum');
-  if (categories.length === 0) categories.push('all');
+  if (metals.size === 0 || categories.length === 0) categories.push('all');
   return categories;
 }
 

@@ -45,6 +45,12 @@ test('filters an existing scan without dropping unrelated saved parts', () => {
   assert.equal(componentVisible(crystal, ['gold', 'silver']), false);
   assert.equal(componentVisible(crystal, ['all']), true);
   assert.deepEqual(componentCategories(finger), ['gold']);
+  const bareChip = part({ type: 'ic_chip', precious_metals: [] });
+  const bareMlcc = part({ type: 'mlcc', precious_metals: [] });
+  assert.equal(componentVisible(bareChip, ['all']), true);
+  assert.equal(componentVisible(bareMlcc, ['all']), true);
+  assert.equal(componentVisible(bareChip, ['gold']), true);
+  assert.equal(componentVisible(bareMlcc, ['gold']), false);
 });
 
 test('names only enabled groups in the model prompt', () => {
