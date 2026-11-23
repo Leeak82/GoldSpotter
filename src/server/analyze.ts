@@ -5,7 +5,7 @@ import { finalizeAnalysis } from '../shared/postprocess';
 import { SCAN_TYPES, type ScanType } from '../shared/scanTypes';
 import { COMPONENT_TYPES } from '../shared/types';
 import type { Analysis } from '../shared/types';
-import type { PreparedImage } from './image';
+import { imageSize, type PreparedImage } from './image';
 import { SYSTEM_PROMPT, userPrompt } from './prompt';
 
 const CALL_TIMEOUT_MS = 25_000;
@@ -113,7 +113,7 @@ async function analyzeUncached(image: PreparedImage, env: NodeJS.ProcessEnv, typ
 
   try {
     const value = await interpretWithRetry((attempt) => callGroq(image, attempt, groqKey, env.GROQ_MODEL, types));
-    return { ...finalizeAnalysis(value), provider: 'groq', model: env.GROQ_MODEL?.trim() || 'qwen/qwen3.8-27b' };
+    return { ...finalizeAnalysis(value, { aspect: aspectOf(image) }), provider: 'groq', model: env.GROQ_MODEL?.trim() || 'qwen/qwen3.8-27b' };
   } catch (error) {
     if (geminiError) {
       throw new HttpError(
@@ -183,7 +183,12 @@ async function readWithModel(
       // Keep the medium-resolution read if the sharper pass fails.
     }
   }
-  return { ...finalizeAnalysis(analysis), provider: 'gemini', model };
+  return { ...finalizeAnalysis(analysis, { aspect: aspectOf(image) }), provider: 'gemini', model };
+}
+
+function aspectOf(image: PreparedImage): number {
+  const size = imageSize(image.buffer);
+  return size && size.height > 0 ? size.width / size.height : 1;
 }
 
 function isLite(model: string | undefined): boolean {
@@ -405,11 +410,12 @@ export const RESPONSE_SCHEMA = {
           box_2d: { type: 'array', items: { type: 'integer' } },
           marking: { type: 'string' },
           count: { type: 'integer' },
+          finish: { type: 'string', enum: ['gold', 'silver', 'copper', 'unclear'] },
           precious_metals: { type: 'array', items: { type: 'string', enum: ['gold', 'silver', 'palladium', 'platinum', 'tantalum'] } },
           confidence: { type: 'string', enum: ['low', 'medium', 'high'] },
         },
-        required: ['type', 'box_2d', 'confidence'],
-        propertyOrdering: ['type', 'box_2d', 'marking', 'count', 'precious_metals', 'confidence'],
+        required: ['type', 'box_2d', 'finish', 'confidence'],
+        propertyOrdering: ['type', 'box_2d', 'finish', 'marking', 'count', 'precious_metals', 'confidence'],
       },
     },
   },

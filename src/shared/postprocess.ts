@@ -43,6 +43,8 @@ export const PART_RULES: Record<ComponentType, PartRule> = {
   relay: { metals: ['silver'], gold: 'none', value: 'low', points: 0.5, cluster: false, plural: 'Relays', note: 'Relay contacts. Usually silver alloy, sometimes gold-flashed.' },
   mlcc: { metals: ['palladium'], gold: 'none', value: 'low', points: 0, cluster: true, plural: 'MLCC ceramic capacitors', note: 'Ceramic capacitor. Palladium or silver electrodes possible, not gold.' },
   tantalum_capacitor: { metals: ['tantalum'], gold: 'none', value: 'low', points: 0, cluster: true, plural: 'Tantalum capacitors', note: 'Molded tantalum capacitor. Tantalum, not gold.' },
+  tinned_pads: { metals: [], gold: 'none', value: 'low', points: 0, cluster: true, plural: 'Tinned pads (HASL)', note: 'Silver-grey pads are tin solder (HASL), not gold.' },
+  copper_pads: { metals: [], gold: 'none', value: 'low', points: 0, cluster: true, plural: 'Bare copper pads', note: 'Copper-coloured pads. Copper, not gold.' },
   plated_through_hole: { metals: [], gold: 'none', value: 'low', points: 0, cluster: true, plural: 'Plated through-holes', note: 'Plated holes. Copper barrels, not a gold source.' },
   resistor: { metals: [], gold: 'none', value: 'low', points: 0, cluster: true, plural: 'SMD resistors', note: 'Thick-film resistor. Not a precious-metal source.' },
   inductor_diode: { metals: [], gold: 'none', value: 'low', points: 0, cluster: false, plural: 'Inductors / diodes', note: 'Molded power part. Copper and ferrite, not precious.' },
@@ -102,10 +104,70 @@ type Group = {
   count: number;
   confidence: ConfidenceLevel;
   markings: string[];
-  /** Only kept for type "other", where the model may name a metal (for example platinum). */
-  metals: PreciousMetal[];
+  finish?: Component['finish'];
+  /** Overrides the type's metals: "other" may carry a model-named metal, tin-plated pins carry none. Null keeps the type's metals. */
+  metals: PreciousMetal[] | null;
+  note: string | null;
   review: Component['review'];
 };
+
+const GOLD_SURFACES = new Set<ComponentType>(['gold_plated_pads', 'gold_fingers']);
+
+function tinnedPins(part: Component): boolean {
+  return part.type === 'pin_connector' && (part.finish === 'silver' || part.finish === 'copper');
+}
+
+/**
+ * Exposed metal is only called gold when the model saw a gold colour.
+ * Silver-grey is tin (HASL), copper-coloured is bare copper. Pads of unclear colour are dropped;
+ * edge fingers of unclear colour stay gold at low confidence because fingers are nearly always gold.
+ * A missing finish counts as unclear, so the safeguard fails closed.
+ */
+export function applyFinish(part: Component): Component | null {
+  if (!GOLD_SURFACES.has(part.type) || part.finish === 'gold') return part;
+  if (part.finish === 'silver') return { ...part, type: 'tinned_pads' };
+  if (part.finish === 'copper') return { ...part, type: 'copper_pads' };
+  if (part.type === 'gold_fingers') return { ...part, confidence: 'low' };
+  return null;
+}
+
+/**
+ * A single chip box cannot hold more parts than fit along its long side. Caps the model's count
+ * for non-cluster types (chips) using the photo's width/height ratio.
+ */
+export function capCount(part: Component, aspect: number): Component {
+  const count = part.count ?? 1;
+  if (count <= 1 || PART_RULES[part.type].cluster) return part;
+  const w = part.bbox[2] * aspect;
+  const h = part.bbox[3];
+  const fit = Math.max(1, Math.floor(Math.max(w, h) / Math.max(1e-6, Math.min(w, h)) + 0.25));
+  return fit >= count ? part : { ...part, count: fit };
+}
+
+function where(box: BBox): string {
+  const cx = box[0] + box[2] / 2;
+  const cy = box[1] + box[3] / 2;
+  const vertical = cy < 0.4 ? 'top' : cy > 0.6 ? 'bottom' : '';
+  const horizontal = cx < 0.4 ? 'left' : cx > 0.6 ? 'right' : '';
+  return [vertical, horizontal].filter(Boolean).join(' ') || 'middle';
+}
+
+/** Two entries never share a title: repeats get a place word, then a number if still equal. */
+export function disambiguateTitles(components: Component[]): Component[] {
+  const totals = new Map<string, number>();
+  for (const part of components) totals.set(part.label, (totals.get(part.label) ?? 0) + 1);
+  const used = new Set<string>();
+  return components.map((part) => {
+    if ((totals.get(part.label) ?? 0) < 2) {
+      used.add(part.label);
+      return part;
+    }
+    let label = `${part.label} · ${where(part.bbox)}`;
+    for (let n = 2; used.has(label); n += 1) label = `${part.label} · ${where(part.bbox)} ${n}`;
+    used.add(label);
+    return { ...part, label };
+  });
+}
 
 /** Merges duplicate boxes (same type, overlapping) and clusters neighbouring small parts of one type. */
 export function mergeParts(components: Component[]): Group[] {
@@ -118,7 +180,9 @@ export function mergeParts(components: Component[]): Group[] {
       count: Math.max(1, part.count ?? 1),
       confidence: part.confidence,
       markings: part.marking ? [part.marking] : [],
-      metals: part.type === 'other' ? [...part.precious_metals] : [],
+      ...(part.finish ? { finish: part.finish } : {}),
+      metals: part.type === 'other' && part.precious_metals.length > 0 ? [...part.precious_metals] : tinnedPins(part) ? [] : null,
+      note: tinnedPins(part) ? 'Tin-plated pins. Not a gold source.' : null,
       review: part.review,
     };
     groups.push(group);
@@ -130,7 +194,7 @@ export function mergeParts(components: Component[]): Group[] {
         const a = groups[i];
         for (let j = 0; j < i; j += 1) {
           const b = groups[j];
-          if (a.type !== b.type || a.metals.join() !== b.metals.join()) continue;
+          if (a.type !== b.type || String(a.metals) !== String(b.metals)) continue;
           const duplicate = iou(a.bbox, b.bbox) > 0.3 || containment(a.bbox, b.bbox) > 0.7;
           const merged = unionBox(a.bbox, b.bbox);
           const cluster = PART_RULES[a.type].cluster && neighbours(a.bbox, b.bbox) && merged[2] * merged[3] <= MAX_CLUSTER_AREA;
@@ -139,7 +203,7 @@ export function mergeParts(components: Component[]): Group[] {
           b.count = duplicate ? Math.max(a.count, b.count) : a.count + b.count;
           b.confidence = betterConfidence(a.confidence, b.confidence);
           b.markings = [...new Set([...b.markings, ...a.markings])];
-          b.metals = [...new Set([...b.metals, ...a.metals])];
+
           groups.splice(i, 1);
           changed = true;
           break;
@@ -188,26 +252,32 @@ export function headline(components: Component[]): { verdict: string; summary: s
  * fixed titles and notes per type, merged duplicates, a stable sort,
  * and a grade and headline computed from the parts.
  */
-export function finalizeAnalysis(analysis: Analysis): Analysis {
+export function finalizeAnalysis(analysis: Analysis, options: { aspect?: number } = {}): Analysis {
   if (analysis.outcome !== 'candidates') {
     return { ...analysis, components: [], grade: null };
   }
-  const groups = mergeParts(analysis.components);
+  const aspect = options.aspect && Number.isFinite(options.aspect) && options.aspect > 0 ? options.aspect : 1;
+  const checked = analysis.components
+    .map(applyFinish)
+    .filter((part): part is Component => part !== null)
+    .map((part) => capCount(part, aspect));
+  const groups = mergeParts(checked);
   const components: Component[] = groups.map((group) => {
     const rule = PART_RULES[group.type];
     const marking = group.markings.length === 1 ? group.markings[0] : undefined;
-    const metals = group.type === 'other' && group.metals.length > 0 ? group.metals : rule.metals;
+    const metals = group.metals ?? rule.metals;
     return {
       label: partTitle(group.type, group.count, group.markings),
       type: group.type,
       bbox: group.bbox.map(round3) as BBox,
       precious_metals: [...metals],
-      gold_level: rule.gold,
-      value_potential: rule.value,
+      gold_level: metals.includes('gold') ? rule.gold : 'none',
+      value_potential: metals.length === 0 && group.metals !== null ? 'low' : rule.value,
       confidence: group.confidence,
-      note: metals.includes('platinum') && group.type === 'other' ? 'Possible platinum-bearing part. Check it before sorting.' : rule.note,
+      note: group.note ?? (metals.includes('platinum') && group.type === 'other' ? 'Possible platinum-bearing part. Check it before sorting.' : rule.note),
       count: group.count,
       ...(marking ? { marking } : {}),
+      ...(group.finish ? { finish: group.finish } : {}),
       review: group.review,
     };
   });
@@ -219,7 +289,7 @@ export function finalizeAnalysis(analysis: Analysis): Analysis {
       a.bbox[1] - b.bbox[1] ||
       a.bbox[0] - b.bbox[0],
   );
-  const kept = components.slice(0, MAX_PARTS);
+  const kept = disambiguateTitles(components.slice(0, MAX_PARTS));
   const grade = scoreGrade(kept);
   const { verdict, summary } = headline(kept);
   return { ...analysis, components: kept, grade, grade_label: GRADE_LABELS[grade], verdict, summary };

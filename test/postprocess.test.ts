@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { finalizeAnalysis, mergeParts } from '../src/shared/postprocess';
+import { componentVisible } from '../src/shared/scanTypes';
 import type { Analysis, Component } from '../src/shared/types';
 import { box2dToBBox, validateAnalysis } from '../src/shared/validate';
 
@@ -78,7 +79,7 @@ test('gold pads rank first, the SOIC keeps its own package name, and the headlin
       part({ type: 'soic_chip', bbox: [0.44, 0.7, 0.18, 0.25] }),
       part({ type: 'mlcc', bbox: [0.55, 0.05, 0.08, 0.08] }),
       part({ type: 'qfp_chip', bbox: [0.1, 0.2, 0.4, 0.5] }),
-      part({ type: 'gold_plated_pads', bbox: [0.3, 0.08, 0.15, 0.1] }),
+      part({ type: 'gold_plated_pads', finish: 'gold', bbox: [0.3, 0.08, 0.15, 0.1] }),
     ]),
   );
   assert.deepEqual(
@@ -95,7 +96,7 @@ test('gold pads rank first, the SOIC keeps its own package name, and the headlin
 test('the same parts in a different order give the identical result', () => {
   const parts = [
     part({ type: 'qfp_chip', bbox: [0.1, 0.2, 0.4, 0.5], confidence: 'high' }),
-    part({ type: 'gold_plated_pads', bbox: [0.3, 0.08, 0.15, 0.1] }),
+    part({ type: 'gold_plated_pads', finish: 'gold', bbox: [0.3, 0.08, 0.15, 0.1] }),
     part({ type: 'resistor', bbox: [0.6, 0.4, 0.07, 0.06] }),
   ];
   const a = finalizeAnalysis(analysis(parts));
@@ -137,4 +138,81 @@ test('clustering follows each group type, not the part that was just added', () 
 test('a platinum candidate reported as other keeps its metal', () => {
   const out = finalizeAnalysis(analysis([part({ type: 'other', precious_metals: ['platinum'], bbox: [0.2, 0.2, 0.1, 0.1] })]));
   assert.deepEqual(out.components[0].precious_metals, ['platinum']);
+});
+
+test('silver pads become tinned pads, not gold', () => {
+  const out = finalizeAnalysis(analysis([part({ type: 'gold_plated_pads', finish: 'silver', bbox: [0.3, 0.05, 0.15, 0.12] })]));
+  assert.equal(out.components[0].type, 'tinned_pads');
+  assert.equal(out.components[0].label, 'Tinned pads (HASL)');
+  assert.deepEqual(out.components[0].precious_metals, []);
+  assert.equal(out.verdict, 'No likely gold spots');
+});
+
+test('gold-coloured pads stay gold, copper pads are copper, unclear pads are dropped', () => {
+  const out = finalizeAnalysis(
+    analysis([
+      part({ type: 'gold_plated_pads', finish: 'gold', bbox: [0.1, 0.1, 0.1, 0.1] }),
+      part({ type: 'gold_plated_pads', finish: 'copper', bbox: [0.6, 0.6, 0.1, 0.1] }),
+      part({ type: 'gold_plated_pads', finish: 'unclear', bbox: [0.4, 0.8, 0.1, 0.1] }),
+    ]),
+  );
+  assert.deepEqual(out.components.map((item) => item.type), ['gold_plated_pads', 'copper_pads']);
+  assert.deepEqual(out.components[0].precious_metals, ['gold']);
+});
+
+test('gold fingers stay gold; silver fingers do not', () => {
+  const gold = finalizeAnalysis(analysis([part({ type: 'gold_fingers', finish: 'gold', bbox: [0.02, 0.8, 0.9, 0.08] })]));
+  assert.deepEqual(gold.components[0].precious_metals, ['gold']);
+  const unclear = finalizeAnalysis(analysis([part({ type: 'gold_fingers', finish: 'unclear', bbox: [0.02, 0.8, 0.9, 0.08] })]));
+  assert.equal(unclear.components[0].type, 'gold_fingers');
+  assert.equal(unclear.components[0].confidence, 'low');
+  const silver = finalizeAnalysis(analysis([part({ type: 'gold_fingers', finish: 'silver', bbox: [0.02, 0.8, 0.9, 0.08] })]));
+  assert.equal(silver.components[0].type, 'tinned_pads');
+});
+
+test('tin-plated pins are not marked gold', () => {
+  const out = finalizeAnalysis(analysis([part({ type: 'pin_connector', finish: 'silver', bbox: [0.1, 0.1, 0.3, 0.05] })]));
+  assert.deepEqual(out.components[0].precious_metals, []);
+  assert.equal(out.components[0].gold_level, 'none');
+  assert.match(out.components[0].note, /Tin-plated/);
+});
+
+test('a single chip box cannot claim eight chips; a long row can', () => {
+  // 1280x668 photo: a 151x94 px box holds one chip, a 1085x96 px row holds eight.
+  const out = finalizeAnalysis(
+    analysis([
+      part({ type: 'ram_chip', count: 8, marking: 'ELPIDA', bbox: [0.362, 0.14, 0.118, 0.14] }),
+      part({ type: 'ram_chip', count: 8, marking: 'ELPIDA', bbox: [0.088, 0.611, 0.848, 0.144] }),
+    ]),
+    { aspect: 1280 / 668 },
+  );
+  const titles = out.components.map((item) => item.label);
+  assert.ok(titles.includes('RAM chip (ELPIDA)'), titles.join(' | '));
+  assert.ok(titles.includes('RAM chips ×8 (ELPIDA)'), titles.join(' | '));
+});
+
+test('two entries never share a title', () => {
+  const out = finalizeAnalysis(
+    analysis([
+      part({ type: 'ram_chip', count: 4, bbox: [0.45, 0.1, 0.5, 0.15] }),
+      part({ type: 'ram_chip', count: 4, bbox: [0.05, 0.6, 0.5, 0.15] }),
+    ]),
+    { aspect: 1.9 },
+  );
+  const titles = out.components.map((item) => item.label);
+  assert.equal(new Set(titles).size, titles.length, titles.join(' | '));
+  assert.ok(titles.some((title) => / · top/.test(title)));
+  assert.ok(titles.some((title) => / · bottom/.test(title)));
+});
+
+test('pads with no reported finish are not called gold', () => {
+  const out = finalizeAnalysis(analysis([part({ type: 'gold_plated_pads', bbox: [0.3, 0.05, 0.15, 0.12] })]));
+  assert.equal(out.components.length, 0);
+});
+
+test('tin-plated pins drop out of a gold-only scan', () => {
+  const out = finalizeAnalysis(analysis([part({ type: 'pin_connector', finish: 'silver', bbox: [0.1, 0.1, 0.3, 0.05] })]));
+  assert.equal(componentVisible(out.components[0], ['gold']), false);
+  assert.equal(componentVisible(out.components[0], ['all']), true);
+  assert.equal(componentVisible(part({ type: 'pin_connector' }), ['gold']), true);
 });

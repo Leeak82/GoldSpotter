@@ -44,7 +44,7 @@ export function detectionInstructions(types: ScanType[]): string {
   const lines: string[] = ['Only report part types for the groups that are on.'];
   if (types.includes('gold')) {
     lines.push(
-      'On — Gold: gold_fingers, gold_plated_pads (exposed gold-finish pads and vias), pin_connector, cpu_processor, ram_chip, qfp_chip, bga_chip, soic_chip, ic_chip.',
+      'On — Gold: gold_fingers, gold_plated_pads (exposed pads and vias that look gold-coloured only), pin_connector, cpu_processor, ram_chip, qfp_chip, bga_chip, soic_chip, ic_chip.',
     );
   }
   if (types.includes('silver')) lines.push('On — Silver: relay.');
@@ -52,17 +52,18 @@ export function detectionInstructions(types: ScanType[]): string {
   if (types.includes('platinum')) lines.push('On — Platinum: only a part you can clearly see that plausibly carries platinum, as type other with precious_metals ["platinum"].');
   if (types.includes('tantalum')) lines.push('On — Tantalum: tantalum_capacitor.');
   if (types.includes('all')) {
-    lines.push('On — All components: also report resistor, inductor_diode, crystal_oscillator, plated_through_hole and other visible parts.');
+    lines.push('On — All components: also report tinned_pads, copper_pads, resistor, inductor_diode, crystal_oscillator, plated_through_hole and other visible parts.');
   }
   const disabled = SCAN_TYPES.filter((type) => !types.includes(type)).map((type) => SCAN_LABELS[type].name);
   if (disabled.length > 0) lines.push(`Disabled, do not return these: ${disabled.join(', ')}.`);
   return lines.join('\n');
 }
 
-export function componentCategories(component: Pick<Component, 'type' | 'precious_metals'>): ScanType[] {
+export function componentCategories(component: Pick<Component, 'type' | 'precious_metals' | 'finish'>): ScanType[] {
   const metals = new Set<PreciousMetal>(component.precious_metals);
   const categories: ScanType[] = [];
-  if (GOLD_TYPES.has(component.type) || metals.has('gold') || (component.type === 'pin_connector' && (metals.has('gold') || metals.size === 0))) {
+  const tinnedPins = component.type === 'pin_connector' && (component.finish === 'silver' || component.finish === 'copper');
+  if (GOLD_TYPES.has(component.type) || metals.has('gold') || (component.type === 'pin_connector' && metals.size === 0 && !tinnedPins)) {
     categories.push('gold');
   }
   if (metals.has('silver')) categories.push('silver');
@@ -73,7 +74,7 @@ export function componentCategories(component: Pick<Component, 'type' | 'preciou
   return categories;
 }
 
-export function componentVisible(component: Pick<Component, 'type' | 'precious_metals'>, enabled: ScanType[]): boolean {
+export function componentVisible(component: Pick<Component, 'type' | 'precious_metals' | 'finish'>, enabled: ScanType[]): boolean {
   const active = new Set(enabled);
   return componentCategories(component).some((category) => active.has(category));
 }

@@ -1,5 +1,6 @@
 import {
   DISCLAIMER,
+  FINISHES,
   GOLD_LEVELS,
   GRADE_LABELS,
   GRADES,
@@ -17,6 +18,7 @@ import {
   type Component,
   type ComponentType,
   type ConfidenceLevel,
+  type Finish,
   type GoldLevel,
   type Grade,
   type Outcome,
@@ -70,6 +72,10 @@ const TYPE_ALIASES: Record<string, ComponentType> = {
   'inductor diode': 'inductor_diode',
   'gold plated pads finish': 'gold_plated_pads',
   enig: 'gold_plated_pads',
+  'tinned pads': 'tinned_pads',
+  hasl: 'tinned_pads',
+  'tin pads': 'tinned_pads',
+  'copper pads': 'copper_pads',
   'enig pads': 'gold_plated_pads',
   ic: 'ic_chip',
   chip: 'ic_chip',
@@ -200,6 +206,8 @@ function normalizeComponent(item: unknown): Component | null {
   if (!confidence) return null;
   const marking = cleanText(record.marking, 16).replace(/^(none|n\/a|unknown|-)$/i, '');
   const count = asNumber(record.count);
+  const finishText = cleanText(record.finish, 16).toLowerCase();
+  const finish = FINISHES.includes(finishText as Finish) ? (finishText as Finish) : undefined;
   const goldLevel = normalizeGoldLevel(record.gold_level ?? record.goldLevel);
   let note = soften(cleanText(record.why ?? record.note, 280));
   if (!note) note = 'Visible part flagged as a likely candidate, not a confirmed find.';
@@ -217,6 +225,7 @@ function normalizeComponent(item: unknown): Component | null {
     note,
     ...(count !== null && count >= 1 ? { count: Math.min(99, Math.round(count)) } : {}),
     ...(marking ? { marking } : {}),
+    ...(finish ? { finish } : {}),
     review: normalizeReview(record.review),
   };
 }
