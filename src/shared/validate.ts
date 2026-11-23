@@ -8,6 +8,7 @@ import {
   RETAKE_TIPS,
   REVIEWS,
   SAFE_TIPS,
+  TYPE_LABELS,
   VALUE_LEVELS,
   type Analysis,
   type AnalysisFailure,
@@ -49,8 +50,27 @@ const TYPE_ALIASES: Record<string, ComponentType> = {
   'ic chip': 'ic_chip',
   'bga ic': 'ic_chip',
   'bga ic chips': 'ic_chip',
-  qfp: 'ic_chip',
-  bga: 'ic_chip',
+  qfp: 'qfp_chip',
+  'qfp chip': 'qfp_chip',
+  lqfp: 'qfp_chip',
+  tqfp: 'qfp_chip',
+  qfn: 'ic_chip',
+  bga: 'bga_chip',
+  'bga chip': 'bga_chip',
+  soic: 'soic_chip',
+  'soic chip': 'soic_chip',
+  sop: 'soic_chip',
+  tssop: 'soic_chip',
+  resistor: 'resistor',
+  resistors: 'resistor',
+  'smd resistor': 'resistor',
+  'chip resistor': 'resistor',
+  inductor: 'inductor_diode',
+  diode: 'inductor_diode',
+  'inductor diode': 'inductor_diode',
+  'gold plated pads finish': 'gold_plated_pads',
+  enig: 'gold_plated_pads',
+  'enig pads': 'gold_plated_pads',
   ic: 'ic_chip',
   chip: 'ic_chip',
   chips: 'ic_chip',
@@ -119,7 +139,8 @@ export function validateAnalysis(input: unknown): AnalysisSuccess | AnalysisFail
 
   const outcome = normalizeOutcome(record.outcome, components.length);
   const grade = outcome === 'candidates' ? normalizeGrade(record.grade) : null;
-  if (outcome === 'candidates' && !grade) return { ok: false, error: 'Grade must be A, B, C, or D.' };
+  // A blank or "none" grade is filled in from the parts later; any other value is a bad reply.
+  if (outcome === 'candidates' && !grade && !gradeIsBlank(record.grade)) return { ok: false, error: 'Grade must be A, B, C, or D.' };
 
   let verdict = soften(cleanText(record.verdict, 420));
   if (!verdict) return { ok: false, error: 'Verdict was empty.' };
@@ -171,13 +192,14 @@ export function clampBBox(raw: unknown): BBox | null {
 function normalizeComponent(item: unknown): Component | null {
   if (!item || typeof item !== 'object' || Array.isArray(item)) return null;
   const record = item as Record<string, unknown>;
-  const label = soften(cleanText(record.label, 80));
-  if (!label) return null;
-  const bbox = clampBBox(record.bbox ?? record.box);
-  if (!bbox) return null;
-  const confidence = normalizeConfidence(record.confidence);
-  if (!confidence) return null;
   const type = normalizeType(record.type);
+  const label = soften(cleanText(record.label, 80)) || TYPE_LABELS[type];
+  const bbox = record.box_2d !== undefined ? box2dToBBox(record.box_2d) : clampBBox(record.bbox ?? record.box);
+  if (!bbox) return null;
+  const confidence = normalizeConfidence(record.confidence ?? 'medium');
+  if (!confidence) return null;
+  const marking = cleanText(record.marking, 16).replace(/^(none|n\/a|unknown|-)$/i, '');
+  const count = asNumber(record.count);
   const goldLevel = normalizeGoldLevel(record.gold_level ?? record.goldLevel);
   let note = soften(cleanText(record.why ?? record.note, 280));
   if (!note) note = 'Visible part flagged as a likely candidate, not a confirmed find.';
@@ -193,8 +215,25 @@ function normalizeComponent(item: unknown): Component | null {
     value_potential: normalizeValue(record.value_potential ?? record.valuePotential, goldLevel, type),
     confidence,
     note,
+    ...(count !== null && count >= 1 ? { count: Math.min(99, Math.round(count)) } : {}),
+    ...(marking ? { marking } : {}),
     review: normalizeReview(record.review),
   };
+}
+
+/** Gemini's native box format: [ymin, xmin, ymax, xmax] on a 0 to 1000 grid. */
+export function box2dToBBox(raw: unknown): BBox | null {
+  if (!Array.isArray(raw) || raw.length < 4) return null;
+  const nums = raw.slice(0, 4).map(asNumber);
+  if (!nums.every((n): n is number => n !== null)) return null;
+  const scale = nums.some((n) => n > 1.5) ? 1000 : 1;
+  const [y0, x0, y1, x1] = nums.map((n) => clamp(n / scale, 0, 1));
+  const x = Math.min(x0, x1);
+  const y = Math.min(y0, y1);
+  const w = Math.abs(x1 - x0);
+  const h = Math.abs(y1 - y0);
+  if (w < MIN_BOX || h < MIN_BOX) return null;
+  return [round4(x), round4(y), round4(w), round4(h)];
 }
 
 function normalizeOutcome(raw: unknown, componentCount: number): Outcome {
@@ -245,6 +284,12 @@ function normalizeTips(raw: unknown): string[] {
     }
   }
   return tips.length > 0 ? tips : [...SAFE_TIPS];
+}
+
+function gradeIsBlank(raw: unknown): boolean {
+  if (raw === undefined || raw === null) return true;
+  const text = cleanText(raw, 8).toLowerCase();
+  return text === '' || text === 'none';
 }
 
 function normalizeGrade(raw: unknown): Grade | null {

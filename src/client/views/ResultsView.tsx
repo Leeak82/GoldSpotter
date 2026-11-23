@@ -2,8 +2,8 @@ import { useEffect, useState } from 'react';
 import type { ScanType } from '../../shared/scanTypes';
 import {
   CONFIDENCE_LABELS,
+  METAL_COLORS,
   METAL_LABELS,
-  TYPE_LABELS,
   VALUE_ASSUMPTIONS,
   type Analysis,
   type ReviewState,
@@ -57,7 +57,8 @@ export function ResultsView({
   return (
     <section className="results rise">
       <BoardStage src={imageUrl} parts={parts} selectedId={selected} onSelect={setSelected} />
-      <p className="tap-hint">Tap a box, then confirm or reject that likely candidate. The choice stays on this device.</p>
+      {parts.length > 0 ? <MetalTally parts={parts} /> : null}
+      <p className="tap-hint">Tap a number to confirm or reject it.</p>
       {selectedPart ? (
         <div className="review-dock">
           <p>
@@ -74,12 +75,6 @@ export function ResultsView({
           </div>
         </div>
       ) : null}
-      <div className="legend" aria-hidden="true">
-        <span><i style={{ background: '#f0c14b' }} /> Gold</span>
-        <span><i style={{ background: '#d5dbe3' }} /> Silver</span>
-        <span><i style={{ background: '#6eb0c4' }} /> Palladium</span>
-        <span><i style={{ background: '#d0894a' }} /> Tantalum</span>
-      </div>
       {analysis.outcome === 'bad_photo' ? (
         <div className="callout safety">
           <h2>Bad photo</h2>
@@ -103,19 +98,19 @@ export function ResultsView({
         </div>
       </div>
       {analysis.outcome === 'candidates' ? (
-        <aside className="provisional">
-          <h3>Provisional category, not a price</h3>
+        <details className="how-to-read">
+          <summary>How to read this</summary>
           <p>
-            {confirmed} confirmed, {parts.length - confirmed - rejected} unreviewed, {rejected} rejected. Rejected boxes are left out of the read.
+            {confirmed} confirmed, {parts.length - confirmed - rejected} unreviewed, {rejected} rejected.
           </p>
           <ul>
             {VALUE_ASSUMPTIONS.map((item) => (
               <li key={item}>{item}</li>
             ))}
           </ul>
-        </aside>
+        </details>
       ) : null}
-      <h3>{parts.length === 0 ? (analysis.outcome === 'candidates' ? 'Nothing in the active types' : 'No parts marked') : 'Hotspots, highest value potential first'}</h3>
+      <h3>{parts.length === 0 ? (analysis.outcome === 'candidates' ? 'Nothing in the active types' : 'No parts marked') : 'Hotspots'}</h3>
       {parts.length === 0 ? (
         <p className="empty">
           {analysis.outcome === 'candidates'
@@ -137,7 +132,7 @@ export function ResultsView({
                 <span className="part-copy">
                   <strong>{part.label}</strong>
                   <span className="meta">
-                    {candidateKind(part)} · {TYPE_LABELS[part.type]} · {part.value_potential} value · {CONFIDENCE_LABELS[part.confidence]} confidence
+                    {candidateKind(part)} · {part.value_potential} value · {CONFIDENCE_LABELS[part.confidence]} confidence
                   </span>
                   {part.precious_metals.length > 0 ? (
                     <span className="chips">
@@ -184,8 +179,29 @@ export function ResultsView({
   );
 }
 
+function MetalTally({ parts }: { parts: Array<{ precious_metals: Array<keyof typeof METAL_LABELS>; count?: number }> }) {
+  const counts = new Map<string, { label: string; color: string; n: number }>();
+  for (const part of parts) {
+    const metal = part.precious_metals[0];
+    const key = metal ?? 'other';
+    const entry = counts.get(key) ?? { label: metal ? METAL_LABELS[metal] : 'Other parts', color: metal ? METAL_COLORS[metal] : '#a39b8e', n: 0 };
+    entry.n += 1;
+    counts.set(key, entry);
+  }
+  return (
+    <ul className="tally" aria-label="Hotspots by metal">
+      {[...counts.values()].map((entry) => (
+        <li key={entry.label}>
+          <i style={{ background: entry.color }} />
+          {entry.n} {entry.label}
+        </li>
+      ))}
+    </ul>
+  );
+}
+
 function candidateKind(part: { precious_metals: Array<keyof typeof METAL_LABELS> }): string {
-  if (part.precious_metals.length === 0) return 'General parts ID';
-  if (part.precious_metals.includes('gold')) return 'Likely gold-bearing component';
+  if (part.precious_metals.length === 0) return 'Not precious';
+  if (part.precious_metals.includes('gold')) return 'Likely gold';
   return `Likely ${part.precious_metals.map((metal) => METAL_LABELS[metal]).join(' / ')} candidate`;
 }

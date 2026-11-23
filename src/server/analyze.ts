@@ -1,6 +1,9 @@
+import { createHash } from 'node:crypto';
 import { HttpError } from '../shared/errors';
 import { interpretWithRetry } from '../shared/interpret';
+import { finalizeAnalysis } from '../shared/postprocess';
 import { SCAN_TYPES, type ScanType } from '../shared/scanTypes';
+import { COMPONENT_TYPES } from '../shared/types';
 import type { Analysis } from '../shared/types';
 import type { PreparedImage } from './image';
 import { SYSTEM_PROMPT, userPrompt } from './prompt';
@@ -10,13 +13,31 @@ const OVERALL_TIMEOUT_MS = 75_000;
 
 export const DEFAULT_GEMINI_MODEL = 'gemini-3.6-flash';
 export const DEFAULT_GEMINI_FALLBACKS = 'gemini-3.5-flash-lite,gemini-3.1-flash-lite';
+/** How long a model that answered 429 (quota) is skipped before it is tried again. */
+const QUOTA_COOLDOWN_MS = 10 * 60 * 1000;
+const cooling = new Map<string, number>();
+
+export function resetModelCooldowns(): void {
+  cooling.clear();
+}
+
+function coolingDown(model: string): boolean {
+  const until = cooling.get(model);
+  if (!until) return false;
+  if (Date.now() >= until) {
+    cooling.delete(model);
+    return false;
+  }
+  return true;
+}
 
 type MediaLevel = 'LOW' | 'MEDIUM' | 'HIGH';
 
 export function geminiModelChain(env: NodeJS.ProcessEnv): string[] {
   const primary = env.GEMINI_MODEL?.trim() || DEFAULT_GEMINI_MODEL;
   const configured = env.GEMINI_FALLBACK_MODELS === undefined ? DEFAULT_GEMINI_FALLBACKS : env.GEMINI_FALLBACK_MODELS;
-  const names = [primary, ...configured.split(',')];
+  // The full flash model always comes before the lite fallbacks: lite models box parts far less accurately.
+  const names = [primary, DEFAULT_GEMINI_MODEL, ...configured.split(',')];
   const seen = new Set<string>();
   const chain: string[] = [];
   for (const name of names) {
@@ -34,11 +55,39 @@ function mediaLevel(env: NodeJS.ProcessEnv): MediaLevel {
   return 'MEDIUM';
 }
 
+const CACHE_TTL_MS = 6 * 60 * 60 * 1000;
+const CACHE_MAX = 64;
+const resultCache = new Map<string, { at: number; value: Analysis }>();
+
+export function clearResultCache(): void {
+  resultCache.clear();
+}
+
+/**
+ * The same photo sent again returns the same read for a few hours, so a rescan
+ * never shows a different set of hotspots and does not spend model quota.
+ */
 export async function analyzeImage(
   image: PreparedImage,
   env: NodeJS.ProcessEnv = process.env,
   types: ScanType[] = [...SCAN_TYPES],
+  options: { fresh?: boolean } = {},
 ): Promise<Analysis> {
+  const key = `${createHash('sha256').update(image.buffer).digest('hex')}:${[...types].sort().join(',')}`;
+  const hit = resultCache.get(key);
+  if (!options.fresh && hit && Date.now() - hit.at < CACHE_TTL_MS) return hit.value;
+  const value = await analyzeUncached(image, env, types);
+  resultCache.delete(key);
+  resultCache.set(key, { at: Date.now(), value });
+  while (resultCache.size > CACHE_MAX) {
+    const oldest = resultCache.keys().next().value;
+    if (oldest === undefined) break;
+    resultCache.delete(oldest);
+  }
+  return value;
+}
+
+async function analyzeUncached(image: PreparedImage, env: NodeJS.ProcessEnv, types: ScanType[]): Promise<Analysis> {
   const geminiKey = env.GEMINI_API_KEY?.trim() ?? '';
   const groqKey = env.GROQ_API_KEY?.trim() ?? '';
   if (!geminiKey && !groqKey) {
@@ -62,7 +111,7 @@ export async function analyzeImage(
 
   try {
     const value = await interpretWithRetry((attempt) => callGroq(image, attempt, groqKey, env.GROQ_MODEL, types));
-    return { ...value, provider: 'groq', model: env.GROQ_MODEL?.trim() || 'qwen/qwen3.8-27b' };
+    return { ...finalizeAnalysis(value), provider: 'groq', model: env.GROQ_MODEL?.trim() || 'qwen/qwen3.8-27b' };
   } catch (error) {
     if (geminiError) {
       throw new HttpError(
@@ -83,7 +132,9 @@ async function analyzeWithGemini(
 ): Promise<Analysis> {
   const deadline = Date.now() + OVERALL_TIMEOUT_MS;
   const resolution = mediaLevel(env);
-  const models = geminiModelChain(env);
+  const chain = geminiModelChain(env);
+  const ready = chain.filter((model) => !coolingDown(model));
+  const models = ready.length > 0 ? ready : chain;
   let lastError: unknown = new HttpError('The vision service had an error. Try the photo again.', 503, 'model_failed');
   for (let index = 0; index < models.length; index += 1) {
     if (Date.now() >= deadline) break;
@@ -102,9 +153,10 @@ async function analyzeWithGemini(
           // Keep the medium-resolution read if the sharper pass fails.
         }
       }
-      return { ...analysis, provider: 'gemini', model };
+      return { ...finalizeAnalysis(analysis), provider: 'gemini', model };
     } catch (error) {
       lastError = error;
+      if (error instanceof HttpError && error.statusCode === 429) cooling.set(model, Date.now() + QUOTA_COOLDOWN_MS);
       if (!shouldAdvance(error) || index === models.length - 1) throw error;
     }
   }
@@ -144,7 +196,7 @@ async function callGemini(
 
   if (response.status === 400) {
     const detail = await geminiErrorBody(response, model);
-    const schemaRejected = /schema|responseMimeType|response_schema/i.test(detail);
+    const schemaRejected = /schema|responseMimeType|response_schema|seed|property_?ordering/i.test(detail);
     const resolutionRejected = /media.?resolution|unknown field|not supported/i.test(detail);
     if (schemaRejected || resolutionRejected) {
       response = await postJson(
@@ -193,12 +245,16 @@ function geminiBody(image: PreparedImage, attempt: number, types: ScanType[], ge
 
 function generationConfig(withSchema: boolean, resolution: MediaLevel | null): Record<string, unknown> {
   const config: Record<string, unknown> = {
-    temperature: 0.2,
+    temperature: 0,
+    topP: 1,
     maxOutputTokens: 8192,
     responseMimeType: 'application/json',
   };
   if (resolution) config.mediaResolution = `MEDIA_RESOLUTION_${resolution}`;
-  if (withSchema) config.responseSchema = RESPONSE_SCHEMA;
+  if (withSchema) {
+    config.responseSchema = RESPONSE_SCHEMA;
+    config.seed = 7;
+  }
   return config;
 }
 
@@ -239,7 +295,8 @@ async function callGroq(
     'https://api.groq.com/openai/v1/chat/completions',
     {
       model,
-      temperature: 0.2,
+      temperature: 0,
+      seed: 7,
       max_completion_tokens: 4096,
       response_format: { type: 'json_object' },
       messages: [
@@ -304,51 +361,32 @@ function safeError(error: unknown): string {
   return error instanceof Error ? error.message : 'unknown error';
 }
 
-const RESPONSE_SCHEMA = {
+// Gemini rejects empty strings in an enum, so a missing grade is "none", never "".
+export const RESPONSE_SCHEMA = {
   type: 'object',
   properties: {
     board_type: { type: 'string' },
     outcome: { type: 'string', enum: ['candidates', 'unknown', 'bad_photo'] },
-    grade: { type: 'string', enum: ['A', 'B', 'C', 'D', ''] },
+    grade: { type: 'string', enum: ['A', 'B', 'C', 'D', 'none'] },
     verdict: { type: 'string' },
-    summary: { type: 'string' },
-    recovery_tips: { type: 'array', items: { type: 'string' } },
-    retake_tips: { type: 'array', items: { type: 'string' } },
     components: {
       type: 'array',
       items: {
         type: 'object',
         properties: {
-          label: { type: 'string' },
-          type: {
-            type: 'string',
-            enum: [
-              'cpu_processor',
-              'ram_chip',
-              'gold_fingers',
-              'pin_connector',
-              'ic_chip',
-              'mlcc',
-              'tantalum_capacitor',
-              'relay',
-              'crystal_oscillator',
-              'gold_plated_pads',
-              'plated_through_hole',
-              'other',
-            ],
-          },
-          bbox: { type: 'array', items: { type: 'number' } },
-          precious_metals: { type: 'array', items: { type: 'string' } },
-          gold_level: { type: 'string', enum: ['high', 'medium', 'low', 'none'] },
-          value_potential: { type: 'string', enum: ['high', 'medium', 'low'] },
+          type: { type: 'string', enum: [...COMPONENT_TYPES] },
+          box_2d: { type: 'array', items: { type: 'integer' } },
+          marking: { type: 'string' },
+          count: { type: 'integer' },
           confidence: { type: 'string', enum: ['low', 'medium', 'high'] },
-          why: { type: 'string' },
         },
-        required: ['label', 'type', 'bbox', 'precious_metals', 'gold_level', 'value_potential', 'confidence', 'why'],
+        required: ['type', 'box_2d', 'confidence'],
+        propertyOrdering: ['type', 'box_2d', 'marking', 'count', 'confidence'],
       },
     },
   },
-  required: ['board_type', 'outcome', 'verdict', 'summary', 'recovery_tips', 'retake_tips', 'components'],
+  required: ['board_type', 'outcome', 'grade', 'verdict', 'components'],
+  propertyOrdering: ['board_type', 'outcome', 'grade', 'verdict', 'components'],
 };
 
 type GeminiResponse = {

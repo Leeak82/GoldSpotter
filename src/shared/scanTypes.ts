@@ -17,6 +17,9 @@ const GOLD_TYPES = new Set<ComponentType>([
   'gold_plated_pads',
   'cpu_processor',
   'ic_chip',
+  'qfp_chip',
+  'bga_chip',
+  'soic_chip',
   'ram_chip',
 ]);
 
@@ -38,30 +41,18 @@ export function scanSummary(types: ScanType[]): string {
 }
 
 export function detectionInstructions(types: ScanType[]): string {
-  const lines: string[] = ['Only mark groups that are enabled. Skip every disabled group, even if you notice it.'];
+  const lines: string[] = ['Only report part types for the groups that are on.'];
   if (types.includes('gold')) {
     lines.push(
-      'Enabled — Gold: gold-finger edge connectors, gold-colored pin connectors, gold-plated pads, CPUs/processors, RAM chips, and IC/QFP/BGA packages that are likely gold-bearing. Put "gold" in precious_metals.',
+      'On — Gold: gold_fingers, gold_plated_pads (exposed gold-finish pads and vias), pin_connector, cpu_processor, ram_chip, qfp_chip, bga_chip, soic_chip, ic_chip.',
     );
   }
-  if (types.includes('silver')) {
-    lines.push('Enabled — Silver: parts likely to carry silver, such as some relay contacts or silver-colored finishes. Put "silver" in precious_metals.');
-  }
-  if (types.includes('palladium')) {
-    lines.push(
-      'Enabled — Palladium: MLCC ceramic capacitors, which may use palladium or silver electrodes. Use type "mlcc". Do not call them gold-bearing.',
-    );
-  }
-  if (types.includes('platinum')) {
-    lines.push('Enabled — Platinum: only a part you can actually see that is a plausible platinum candidate. Put "platinum" in precious_metals. Leave it out if you are guessing.');
-  }
-  if (types.includes('tantalum')) {
-    lines.push('Enabled — Tantalum capacitors: molded tantalum caps. Use type "tantalum_capacitor" and precious_metals ["tantalum"]. They are not gold.');
-  }
+  if (types.includes('silver')) lines.push('On — Silver: relay.');
+  if (types.includes('palladium')) lines.push('On — Palladium: mlcc ceramic capacitors.');
+  if (types.includes('platinum')) lines.push('On — Platinum: only a part you can clearly see that plausibly carries platinum, as type other.');
+  if (types.includes('tantalum')) lines.push('On — Tantalum: tantalum_capacitor.');
   if (types.includes('all')) {
-    lines.push(
-      'Enabled — All components: also identify other visible parts (crystals, resistors, coils, plain connectors, unmarked chips) even when they are not precious. Use the closest type or "other", leave precious_metals empty when none apply, and say in why that it is a general parts ID, not a precious-metal candidate.',
-    );
+    lines.push('On — All components: also report resistor, inductor_diode, crystal_oscillator, plated_through_hole and other visible parts.');
   }
   const disabled = SCAN_TYPES.filter((type) => !types.includes(type)).map((type) => SCAN_LABELS[type].name);
   if (disabled.length > 0) lines.push(`Disabled, do not return these: ${disabled.join(', ')}.`);
