@@ -176,7 +176,7 @@ export function headline(components: Component[]): { verdict: string; summary: s
   const gold = components.filter((part) => part.precious_metals.includes('gold'));
   if (components.length === 0) return { verdict: 'No parts marked', summary: 'Try a closer, sharper photo.' };
   if (gold.length === 0) return { verdict: 'No likely gold spots', summary: `${components.length} part${components.length === 1 ? '' : 's'} identified.` };
-  const names = [...new Set(gold.map((part) => PART_RULES[part.type].plural.toLowerCase()))].slice(0, 3);
+  const names = [...new Set(gold.map((part) => PART_RULES[part.type].plural))].slice(0, 3);
   return {
     verdict: `${gold.length} likely gold spot${gold.length === 1 ? '' : 's'}`,
     summary: `Best: ${names.join(', ')}.`,

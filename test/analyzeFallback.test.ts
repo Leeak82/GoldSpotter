@@ -117,12 +117,15 @@ test('uses the next model after Gemini returns 503', async () => {
     const value = await analyzeImage(image, { GEMINI_API_KEY: 'test-key' }, ['gold']);
     assert.equal(value.grade, 'B');
     assert.equal(value.model, 'gemini-3.5-flash-lite');
-    assert.equal(calls.length, 2);
+    assert.equal(calls.length, 3);
     assert.match(calls[0], /models\/gemini-3\.6-flash:generateContent/);
-    assert.match(calls[1], /models\/gemini-3\.5-flash-lite:generateContent/);
+    assert.match(calls[1], /models\/gemini-3\.6-flash:generateContent/);
+    assert.match(calls[2], /models\/gemini-3\.5-flash-lite:generateContent/);
     assert.match(logs.join('\n'), /status=503 model=gemini-3\.6-flash/);
     assert.match(logs.join('\n'), /overloaded/);
     assert.doesNotMatch(logs.join('\n'), /AIzaTESTKEY/);
+    await analyzeImage(image, { GEMINI_API_KEY: 'test-key' }, ['gold']);
+    assert.ok(calls.length > 3, 'a lite read is not served from the cache');
   } finally {
     globalThis.fetch = original;
     console.error = originalError;
@@ -189,6 +192,35 @@ test('skips a model that ran out of quota on the next scan', async () => {
     await analyzeImage(image, env, ['gold'], { fresh: true });
     assert.equal(calls.length, 1);
     assert.match(calls[0], /gemini-3\.6-flash/);
+  } finally {
+    globalThis.fetch = original;
+    console.error = originalError;
+  }
+});
+
+test('a busy full model gets a second try before the lite fallback', async () => {
+  const calls: string[] = [];
+  const original = globalThis.fetch;
+  let flashCalls = 0;
+  globalThis.fetch = async (url) => {
+    const href = String(url);
+    calls.push(href);
+    if (href.includes('gemini-3.6-flash:')) {
+      flashCalls += 1;
+      if (flashCalls <= 1) return new Response('busy', { status: 503 });
+    }
+    return new Response(JSON.stringify({ candidates: [{ content: { parts: [{ text: good }] } }] }), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  };
+  const originalError = console.error;
+  console.error = () => {};
+  try {
+    const value = await analyzeImage(image, { GEMINI_API_KEY: 'test-key' }, ['gold']);
+    assert.equal(value.model, 'gemini-3.6-flash');
+    assert.equal(flashCalls, 2);
+    assert.equal(calls.filter((href) => href.includes('lite')).length, 0);
   } finally {
     globalThis.fetch = original;
     console.error = originalError;

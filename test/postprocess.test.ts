@@ -89,7 +89,7 @@ test('gold pads rank first, the SOIC keeps its own package name, and the headlin
   assert.equal(out.grade, 'C');
   assert.equal(out.verdict, '3 likely gold spots');
   assert.ok(out.summary.length <= 80, out.summary);
-  assert.match(out.summary, /gold-plated pads/);
+  assert.equal(out.summary, 'Best: Gold-plated pads, QFP chips, SOIC chips.');
 });
 
 test('the same parts in a different order give the identical result', () => {
