@@ -1,11 +1,57 @@
 import { useEffect, useRef, useState } from 'react';
 import { CameraGuide } from '../components/CameraGuide';
 
+function cameraMessage(caught: unknown): string {
+  const name = caught instanceof DOMException ? caught.name : '';
+  if (name === 'NotAllowedError' || name === 'PermissionDeniedError' || name === 'SecurityError') {
+    return 'Camera access is blocked. Allow the camera for this site in your browser settings, or choose a photo below.';
+  }
+  if (name === 'NotFoundError' || name === 'DevicesNotFoundError' || name === 'OverconstrainedError') {
+    return 'No usable camera was found on this device. Choose a photo below.';
+  }
+  return "This browser can't open a live camera. Choose a photo below.";
+}
+
+function PhotoFallback({ onUpload, prominent }: { onUpload: (file: File) => void; prominent?: boolean }) {
+  return (
+    <label className={prominent ? 'btn btn-primary camera-upload' : 'btn btn-ghost camera-upload'}>
+      Upload / choose photo
+      <input
+        type="file"
+        accept="image/*"
+        onChange={(event) => {
+          const file = event.target.files?.[0];
+          event.currentTarget.value = '';
+          if (file) onUpload(file);
+        }}
+      />
+    </label>
+  );
+}
+
 export function CameraView({ onCapture, onClose, onUpload }: { onCapture: (blob: Blob) => void; onClose: () => void; onUpload: (file: File) => void }) {
+  const rootRef = useRef<HTMLElement>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const [facing, setFacing] = useState<'environment' | 'user'>('environment');
   const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    const root = rootRef.current;
+    const viewport = window.visualViewport;
+    if (!root || !viewport) return;
+    const fit = () => {
+      root.style.height = `${viewport.height}px`;
+      root.style.top = `${viewport.offsetTop}px`;
+    };
+    fit();
+    viewport.addEventListener('resize', fit);
+    viewport.addEventListener('scroll', fit);
+    return () => {
+      viewport.removeEventListener('resize', fit);
+      viewport.removeEventListener('scroll', fit);
+    };
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -13,6 +59,10 @@ export function CameraView({ onCapture, onClose, onUpload }: { onCapture: (blob:
     async function start() {
       setError(null);
       streamRef.current?.getTracks().forEach((track) => track.stop());
+      if (!navigator.mediaDevices?.getUserMedia) {
+        if (!cancelled) setError(cameraMessage(new DOMException('unsupported', 'NotSupportedError')));
+        return;
+      }
       try {
         const stream = await navigator.mediaDevices.getUserMedia({
           audio: false,
@@ -25,10 +75,10 @@ export function CameraView({ onCapture, onClose, onUpload }: { onCapture: (blob:
         streamRef.current = stream;
         if (video) {
           video.srcObject = stream;
-          await video.play();
+          await video.play().catch(() => undefined);
         }
-      } catch {
-        if (!cancelled) setError('The camera did not start. You can still upload a photo or open the camera app.');
+      } catch (caught) {
+        if (!cancelled) setError(cameraMessage(caught));
       }
     }
     void start();
@@ -39,9 +89,17 @@ export function CameraView({ onCapture, onClose, onUpload }: { onCapture: (blob:
     };
   }, [facing]);
 
-  function snap() {
+  async function snap() {
     const video = videoRef.current;
-    if (!video || !video.videoWidth) return;
+    if (!video) return;
+    if (video.paused) {
+      try {
+        await video.play();
+      } catch {
+        // Capture still uses the current frame when the preview cannot play.
+      }
+    }
+    if (!video.videoWidth) return;
     const scale = Math.min(1, 1600 / Math.max(video.videoWidth, video.videoHeight));
     const canvas = document.createElement('canvas');
     canvas.width = Math.max(1, Math.round(video.videoWidth * scale));
@@ -55,7 +113,7 @@ export function CameraView({ onCapture, onClose, onUpload }: { onCapture: (blob:
   }
 
   return (
-    <section className="camera">
+    <section className="camera" ref={rootRef}>
       <div className="camera-top">
         <button type="button" className="text-btn" onClick={onClose}>
           Close
@@ -66,38 +124,20 @@ export function CameraView({ onCapture, onClose, onUpload }: { onCapture: (blob:
       </div>
       <div className="camera-frame">
         <video ref={videoRef} playsInline muted autoPlay />
-        {error ? <p className="camera-error">{error}</p> : <div className="scanline" />}
+        {error ? (
+          <p className="camera-denied" role="alert">
+            {error}
+          </p>
+        ) : (
+          <>
+            <div className="scanline" />
+            <CameraGuide />
+          </>
+        )}
       </div>
-      <CameraGuide />
       <div className="camera-controls">
-        <label className="text-btn">
-          Upload
-          <input
-            type="file"
-            accept="image/*"
-            hidden
-            onChange={(event) => {
-              const file = event.target.files?.[0];
-              event.currentTarget.value = '';
-              if (file) onUpload(file);
-            }}
-          />
-        </label>
-        <button type="button" className="shutter" onClick={snap} aria-label="Take photo" disabled={Boolean(error)} />
-        <label className="text-btn">
-          Camera app
-          <input
-            type="file"
-            accept="image/*"
-            capture="environment"
-            hidden
-            onChange={(event) => {
-              const file = event.target.files?.[0];
-              event.currentTarget.value = '';
-              if (file) onUpload(file);
-            }}
-          />
-        </label>
+        <PhotoFallback onUpload={onUpload} prominent={Boolean(error)} />
+        {error ? null : <button type="button" className="shutter" onClick={() => void snap()} aria-label="Take photo" />}
       </div>
     </section>
   );
