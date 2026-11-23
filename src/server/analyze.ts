@@ -16,9 +16,9 @@ export const LITE_CALL_TIMEOUT_MS = 20_000;
 const LITE_RESERVE_MS = 15_000;
 /**
  * Whole-request cap. Render does not cut web requests this short and the browser fetch has no
- * timeout of its own, so the phone waits for this. Full call + a busy retry + a lite read fit inside.
+ * timeout of its own, so the phone waits for this. Full call + a busy retry + a full lite call fit inside.
  */
-export const OVERALL_TIMEOUT_MS = 95_000;
+export const OVERALL_TIMEOUT_MS = 100_000;
 const CALL_TIMEOUT_MS = FULL_CALL_TIMEOUT_MS;
 
 export function callTimeoutMs(model: string, deadline: number, hasFallback: boolean, now = Date.now()): number {
@@ -326,7 +326,8 @@ function geminiStatus(status: number): HttpError {
     return new HttpError('The vision service is rate limiting requests. Try again shortly.', 429, 'model_failed');
   }
   if (status === 504 || status === 408) {
-    return new HttpError('The vision model timed out. Try a clearer, closer photo.', 504, 'timeout');
+    // Google's own gateway timed out. Not our time budget, so the phone may still retry.
+    return new HttpError('The vision service timed out. Try the photo again.', 504, 'upstream_timeout');
   }
   if (status >= 500) {
     return new HttpError('The vision service had an error. Try the photo again.', status, 'model_failed');
@@ -386,7 +387,7 @@ async function callGroq(
 
 async function postJson(url: string, body: unknown, headers: Record<string, string>, timeoutMs = CALL_TIMEOUT_MS): Promise<Response> {
   if (timeoutMs <= 0) {
-    throw new HttpError('The vision model timed out. Try a clearer, closer photo.', 504, 'timeout');
+    throw new HttpError('The scan took too long. Try again in a minute.', 504, 'timeout');
   }
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
@@ -399,7 +400,7 @@ async function postJson(url: string, body: unknown, headers: Record<string, stri
     });
   } catch (error) {
     if (error instanceof Error && error.name === 'AbortError') {
-      throw new HttpError('The vision model timed out. Try a clearer, closer photo.', 504, 'timeout');
+      throw new HttpError('The scan took too long. Try again in a minute.', 504, 'timeout');
     }
     throw new HttpError('Could not reach the vision service.', 502, 'model_failed');
   } finally {

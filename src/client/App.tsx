@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { componentVisible, type ScanType } from '../shared/scanTypes';
 import type { Analysis, ReviewState } from '../shared/types';
 import { Logo } from './components/Logo';
-import { analyzePhoto, isAiBusy, ScanError } from './lib/api';
+import { analyzePhoto, isAiBusy, shouldResend } from './lib/api';
 import { compressImage } from './lib/compress';
 import {
   clearHistory,
@@ -197,8 +197,7 @@ export function App() {
     try {
       return await analyzePhoto(base64, mimeType, signal, sent);
     } catch (error) {
-      // A 504 means the server already spent its whole time budget, so a second full wait would not help.
-      if (!isAiBusy(error) || signal.aborted || (error instanceof ScanError && error.status === 504)) throw error;
+      if (!shouldResend(error) || signal.aborted) throw error;
       setBusyNote('AI is busy, retrying…');
       await waitForRetry(signal);
       return await analyzePhoto(base64, mimeType, signal, sent);
