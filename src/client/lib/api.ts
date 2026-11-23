@@ -24,6 +24,11 @@ export function isAiBusy(error: unknown): boolean {
   return error.status === 503 || error.status === 504 || error.status === 429;
 }
 
+/** Busy errors are worth one re-send, except a timeout where the server already used its whole budget. */
+export function shouldResend(error: unknown): boolean {
+  return isAiBusy(error) && !(error instanceof ScanError && error.code === 'timeout');
+}
+
 export async function analyzePhoto(base64: string, mimeType: string, signal: AbortSignal, types: ScanType[]): Promise<Analysis> {
   let response: Response;
   try {

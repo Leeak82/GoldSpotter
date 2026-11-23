@@ -8,8 +8,24 @@ import type { Analysis } from '../shared/types';
 import { imageSize, type PreparedImage } from './image';
 import { SYSTEM_PROMPT, userPrompt } from './prompt';
 
-const CALL_TIMEOUT_MS = 25_000;
-const OVERALL_TIMEOUT_MS = 75_000;
+/** The full flash model often needs 20 to 35 seconds on a detailed board photo. */
+export const FULL_CALL_TIMEOUT_MS = 40_000;
+/** Lite models answer in a few seconds; a slow lite call is a real problem. */
+export const LITE_CALL_TIMEOUT_MS = 20_000;
+/** Time kept back from the full model so a lite fallback can still answer inside the overall cap. */
+const LITE_RESERVE_MS = 15_000;
+/**
+ * Whole-request cap. Render does not cut web requests this short and the browser fetch has no
+ * timeout of its own, so the phone waits for this. Full call + a busy retry + a full lite call fit inside.
+ */
+export const OVERALL_TIMEOUT_MS = 100_000;
+const CALL_TIMEOUT_MS = FULL_CALL_TIMEOUT_MS;
+
+export function callTimeoutMs(model: string, deadline: number, hasFallback: boolean, now = Date.now()): number {
+  const left = deadline - now;
+  if (isLite(model)) return Math.min(LITE_CALL_TIMEOUT_MS, left);
+  return Math.min(FULL_CALL_TIMEOUT_MS, hasFallback ? left - LITE_RESERVE_MS : left);
+}
 
 export const DEFAULT_GEMINI_MODEL = 'gemini-3.6-flash';
 export const DEFAULT_GEMINI_FALLBACKS = 'gemini-3.5-flash-lite,gemini-3.1-flash-lite';
@@ -151,15 +167,16 @@ async function analyzeWithGemini(
     try {
       if (busyRetry) {
         try {
-          return await readWithModel(image, apiKey, model, types, resolution, deadline);
+          return await readWithModel(image, apiKey, model, types, resolution, deadline, index < models.length - 1);
         } catch (error) {
-          if (!(error instanceof HttpError) || error.statusCode !== 503 || deadline - Date.now() < 30_000) throw error;
+          if (!(error instanceof HttpError) || error.statusCode !== 503 || deadline - Date.now() < FULL_CALL_TIMEOUT_MS) throw error;
           await sleep(2_000 + Math.floor(Math.random() * 300));
         }
       }
-      return await readWithModel(image, apiKey, model, types, resolution, deadline);
+      return await readWithModel(image, apiKey, model, types, resolution, deadline, index < models.length - 1);
     } catch (error) {
       lastError = error;
+      if (error instanceof HttpError && error.statusCode === 504) console.warn(`[goldspotter] model=${model} timed out; trying the next model`);
       if (error instanceof HttpError && error.statusCode === 429) cooling.set(model, Date.now() + QUOTA_COOLDOWN_MS);
       if (!shouldAdvance(error) || index === models.length - 1) throw error;
     }
@@ -174,8 +191,9 @@ async function readWithModel(
   types: ScanType[],
   resolution: MediaLevel,
   deadline: number,
+  hasFallback: boolean,
 ): Promise<Analysis> {
-  let analysis = await interpretWithRetry((attempt) => callGemini(image, attempt, apiKey, model, types, resolution, deadline));
+  let analysis = await interpretWithRetry((attempt) => callGemini(image, attempt, apiKey, model, types, resolution, deadline, hasFallback));
   if (analysis.outcome === 'unknown' && resolution !== 'HIGH' && deadline - Date.now() > 1_000) {
     try {
       analysis = await interpretWithRetry((attempt) => callGemini(image, attempt, apiKey, model, types, 'HIGH', deadline));
@@ -216,9 +234,10 @@ async function callGemini(
   types: ScanType[],
   resolution: MediaLevel,
   deadline: number,
+  hasFallback = false,
 ): Promise<string> {
   const url = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`;
-  const timeout = Math.min(CALL_TIMEOUT_MS, deadline - Date.now());
+  const timeout = callTimeoutMs(model, deadline, hasFallback);
   let response = await postJson(
     url,
     geminiBody(image, attempt, types, generationConfig(true, resolution)),
@@ -235,7 +254,7 @@ async function callGemini(
         url,
         geminiBody(image, attempt, types, generationConfig(false, resolutionRejected ? null : resolution)),
         { 'x-goog-api-key': apiKey },
-        Math.min(CALL_TIMEOUT_MS, deadline - Date.now()),
+        callTimeoutMs(model, deadline, hasFallback),
       );
     } else {
       throw geminiStatus(response.status);
@@ -307,7 +326,8 @@ function geminiStatus(status: number): HttpError {
     return new HttpError('The vision service is rate limiting requests. Try again shortly.', 429, 'model_failed');
   }
   if (status === 504 || status === 408) {
-    return new HttpError('The vision model timed out. Try a clearer, closer photo.', 504, 'timeout');
+    // Google's own gateway timed out. Not our time budget, so the phone may still retry.
+    return new HttpError('The vision service timed out. Try the photo again.', 504, 'upstream_timeout');
   }
   if (status >= 500) {
     return new HttpError('The vision service had an error. Try the photo again.', status, 'model_failed');
@@ -367,7 +387,7 @@ async function callGroq(
 
 async function postJson(url: string, body: unknown, headers: Record<string, string>, timeoutMs = CALL_TIMEOUT_MS): Promise<Response> {
   if (timeoutMs <= 0) {
-    throw new HttpError('The vision model timed out. Try a clearer, closer photo.', 504, 'timeout');
+    throw new HttpError('The scan took too long. Try again in a minute.', 504, 'timeout');
   }
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
@@ -380,7 +400,7 @@ async function postJson(url: string, body: unknown, headers: Record<string, stri
     });
   } catch (error) {
     if (error instanceof Error && error.name === 'AbortError') {
-      throw new HttpError('The vision model timed out. Try a clearer, closer photo.', 504, 'timeout');
+      throw new HttpError('The scan took too long. Try again in a minute.', 504, 'timeout');
     }
     throw new HttpError('Could not reach the vision service.', 502, 'model_failed');
   } finally {
