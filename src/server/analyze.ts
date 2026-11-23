@@ -77,6 +77,8 @@ export async function analyzeImage(
   const hit = resultCache.get(key);
   if (!options.fresh && hit && Date.now() - hit.at < CACHE_TTL_MS) return hit.value;
   const value = await analyzeUncached(image, env, types);
+  // A lite fallback read is shown but not pinned: the next scan should get a chance at the full model.
+  if (isLite(value.model)) return value;
   resultCache.delete(key);
   resultCache.set(key, { at: Date.now(), value });
   while (resultCache.size > CACHE_MAX) {
@@ -144,16 +146,18 @@ async function analyzeWithGemini(
       await sleep(wait);
     }
     const model = models[index];
+    // Lite models box parts badly, so a busy full model gets one short second try before falling back.
+    const busyRetry = !isLite(model) && models.slice(index + 1).every((next) => isLite(next));
     try {
-      let analysis = await interpretWithRetry((attempt) => callGemini(image, attempt, apiKey, model, types, resolution, deadline));
-      if (analysis.outcome === 'unknown' && resolution !== 'HIGH' && deadline - Date.now() > 1_000) {
+      if (busyRetry) {
         try {
-          analysis = await interpretWithRetry((attempt) => callGemini(image, attempt, apiKey, model, types, 'HIGH', deadline));
-        } catch {
-          // Keep the medium-resolution read if the sharper pass fails.
+          return await readWithModel(image, apiKey, model, types, resolution, deadline);
+        } catch (error) {
+          if (!(error instanceof HttpError) || error.statusCode !== 503 || deadline - Date.now() < 30_000) throw error;
+          await sleep(2_000 + Math.floor(Math.random() * 300));
         }
       }
-      return { ...finalizeAnalysis(analysis), provider: 'gemini', model };
+      return await readWithModel(image, apiKey, model, types, resolution, deadline);
     } catch (error) {
       lastError = error;
       if (error instanceof HttpError && error.statusCode === 429) cooling.set(model, Date.now() + QUOTA_COOLDOWN_MS);
@@ -161,6 +165,29 @@ async function analyzeWithGemini(
     }
   }
   throw lastError;
+}
+
+async function readWithModel(
+  image: PreparedImage,
+  apiKey: string,
+  model: string,
+  types: ScanType[],
+  resolution: MediaLevel,
+  deadline: number,
+): Promise<Analysis> {
+  let analysis = await interpretWithRetry((attempt) => callGemini(image, attempt, apiKey, model, types, resolution, deadline));
+  if (analysis.outcome === 'unknown' && resolution !== 'HIGH' && deadline - Date.now() > 1_000) {
+    try {
+      analysis = await interpretWithRetry((attempt) => callGemini(image, attempt, apiKey, model, types, 'HIGH', deadline));
+    } catch {
+      // Keep the medium-resolution read if the sharper pass fails.
+    }
+  }
+  return { ...finalizeAnalysis(analysis), provider: 'gemini', model };
+}
+
+function isLite(model: string | undefined): boolean {
+  return Boolean(model && /lite/i.test(model));
 }
 
 function shouldAdvance(error: unknown): boolean {
