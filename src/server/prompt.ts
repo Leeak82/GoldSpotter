@@ -14,6 +14,7 @@ Return one JSON object and nothing else:
       "box_2d": [ymin, xmin, ymax, xmax],
       "marking": text printed on the part if you can read it, else "",
       "count": how many identical parts this box covers,
+      "precious_metals": only for type other, the metals it plausibly carries (for example ["platinum"]), else [],
       "confidence": "low" | "medium" | "high"
     }
   ]

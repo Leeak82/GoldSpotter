@@ -133,3 +133,8 @@ test('clustering follows each group type, not the part that was just added', () 
   assert.equal(groups.filter((group) => group.type === 'resistor').length, 1);
   assert.equal(groups.filter((group) => group.type === 'qfp_chip').length, 2);
 });
+
+test('a platinum candidate reported as other keeps its metal', () => {
+  const out = finalizeAnalysis(analysis([part({ type: 'other', precious_metals: ['platinum'], bbox: [0.2, 0.2, 0.1, 0.1] })]));
+  assert.deepEqual(out.components[0].precious_metals, ['platinum']);
+});

@@ -49,7 +49,7 @@ export function detectionInstructions(types: ScanType[]): string {
   }
   if (types.includes('silver')) lines.push('On — Silver: relay.');
   if (types.includes('palladium')) lines.push('On — Palladium: mlcc ceramic capacitors.');
-  if (types.includes('platinum')) lines.push('On — Platinum: only a part you can clearly see that plausibly carries platinum, as type other.');
+  if (types.includes('platinum')) lines.push('On — Platinum: only a part you can clearly see that plausibly carries platinum, as type other with precious_metals ["platinum"].');
   if (types.includes('tantalum')) lines.push('On — Tantalum: tantalum_capacitor.');
   if (types.includes('all')) {
     lines.push('On — All components: also report resistor, inductor_diode, crystal_oscillator, plated_through_hole and other visible parts.');

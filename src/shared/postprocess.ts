@@ -96,7 +96,16 @@ function betterConfidence(a: ConfidenceLevel, b: ConfidenceLevel): ConfidenceLev
   return CONF_RANK[a] <= CONF_RANK[b] ? a : b;
 }
 
-type Group = { type: ComponentType; bbox: BBox; count: number; confidence: ConfidenceLevel; markings: string[]; review: Component['review'] };
+type Group = {
+  type: ComponentType;
+  bbox: BBox;
+  count: number;
+  confidence: ConfidenceLevel;
+  markings: string[];
+  /** Only kept for type "other", where the model may name a metal (for example platinum). */
+  metals: PreciousMetal[];
+  review: Component['review'];
+};
 
 /** Merges duplicate boxes (same type, overlapping) and clusters neighbouring small parts of one type. */
 export function mergeParts(components: Component[]): Group[] {
@@ -109,6 +118,7 @@ export function mergeParts(components: Component[]): Group[] {
       count: Math.max(1, part.count ?? 1),
       confidence: part.confidence,
       markings: part.marking ? [part.marking] : [],
+      metals: part.type === 'other' ? [...part.precious_metals] : [],
       review: part.review,
     };
     groups.push(group);
@@ -120,7 +130,7 @@ export function mergeParts(components: Component[]): Group[] {
         const a = groups[i];
         for (let j = 0; j < i; j += 1) {
           const b = groups[j];
-          if (a.type !== b.type) continue;
+          if (a.type !== b.type || a.metals.join() !== b.metals.join()) continue;
           const duplicate = iou(a.bbox, b.bbox) > 0.3 || containment(a.bbox, b.bbox) > 0.7;
           const merged = unionBox(a.bbox, b.bbox);
           const cluster = PART_RULES[a.type].cluster && neighbours(a.bbox, b.bbox) && merged[2] * merged[3] <= MAX_CLUSTER_AREA;
@@ -129,6 +139,7 @@ export function mergeParts(components: Component[]): Group[] {
           b.count = duplicate ? Math.max(a.count, b.count) : a.count + b.count;
           b.confidence = betterConfidence(a.confidence, b.confidence);
           b.markings = [...new Set([...b.markings, ...a.markings])];
+          b.metals = [...new Set([...b.metals, ...a.metals])];
           groups.splice(i, 1);
           changed = true;
           break;
@@ -185,15 +196,16 @@ export function finalizeAnalysis(analysis: Analysis): Analysis {
   const components: Component[] = groups.map((group) => {
     const rule = PART_RULES[group.type];
     const marking = group.markings.length === 1 ? group.markings[0] : undefined;
+    const metals = group.type === 'other' && group.metals.length > 0 ? group.metals : rule.metals;
     return {
       label: partTitle(group.type, group.count, group.markings),
       type: group.type,
       bbox: group.bbox.map(round3) as BBox,
-      precious_metals: [...rule.metals],
+      precious_metals: [...metals],
       gold_level: rule.gold,
       value_potential: rule.value,
       confidence: group.confidence,
-      note: rule.note,
+      note: metals.includes('platinum') && group.type === 'other' ? 'Possible platinum-bearing part. Check it before sorting.' : rule.note,
       count: group.count,
       ...(marking ? { marking } : {}),
       review: group.review,
