@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { finalizeAnalysis, mergeParts } from '../src/shared/postprocess';
+import { componentVisible } from '../src/shared/scanTypes';
 import type { Analysis, Component } from '../src/shared/types';
 import { box2dToBBox, validateAnalysis } from '../src/shared/validate';
 
@@ -78,7 +79,7 @@ test('gold pads rank first, the SOIC keeps its own package name, and the headlin
       part({ type: 'soic_chip', bbox: [0.44, 0.7, 0.18, 0.25] }),
       part({ type: 'mlcc', bbox: [0.55, 0.05, 0.08, 0.08] }),
       part({ type: 'qfp_chip', bbox: [0.1, 0.2, 0.4, 0.5] }),
-      part({ type: 'gold_plated_pads', bbox: [0.3, 0.08, 0.15, 0.1] }),
+      part({ type: 'gold_plated_pads', finish: 'gold', bbox: [0.3, 0.08, 0.15, 0.1] }),
     ]),
   );
   assert.deepEqual(
@@ -95,7 +96,7 @@ test('gold pads rank first, the SOIC keeps its own package name, and the headlin
 test('the same parts in a different order give the identical result', () => {
   const parts = [
     part({ type: 'qfp_chip', bbox: [0.1, 0.2, 0.4, 0.5], confidence: 'high' }),
-    part({ type: 'gold_plated_pads', bbox: [0.3, 0.08, 0.15, 0.1] }),
+    part({ type: 'gold_plated_pads', finish: 'gold', bbox: [0.3, 0.08, 0.15, 0.1] }),
     part({ type: 'resistor', bbox: [0.6, 0.4, 0.07, 0.06] }),
   ];
   const a = finalizeAnalysis(analysis(parts));
@@ -202,4 +203,16 @@ test('two entries never share a title', () => {
   assert.equal(new Set(titles).size, titles.length, titles.join(' | '));
   assert.ok(titles.some((title) => / · top/.test(title)));
   assert.ok(titles.some((title) => / · bottom/.test(title)));
+});
+
+test('pads with no reported finish are not called gold', () => {
+  const out = finalizeAnalysis(analysis([part({ type: 'gold_plated_pads', bbox: [0.3, 0.05, 0.15, 0.12] })]));
+  assert.equal(out.components.length, 0);
+});
+
+test('tin-plated pins drop out of a gold-only scan', () => {
+  const out = finalizeAnalysis(analysis([part({ type: 'pin_connector', finish: 'silver', bbox: [0.1, 0.1, 0.3, 0.05] })]));
+  assert.equal(componentVisible(out.components[0], ['gold']), false);
+  assert.equal(componentVisible(out.components[0], ['all']), true);
+  assert.equal(componentVisible(part({ type: 'pin_connector' }), ['gold']), true);
 });

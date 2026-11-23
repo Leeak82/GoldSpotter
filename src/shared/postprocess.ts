@@ -104,6 +104,7 @@ type Group = {
   count: number;
   confidence: ConfidenceLevel;
   markings: string[];
+  finish?: Component['finish'];
   /** Overrides the type's metals: "other" may carry a model-named metal, tin-plated pins carry none. Null keeps the type's metals. */
   metals: PreciousMetal[] | null;
   note: string | null;
@@ -120,10 +121,10 @@ function tinnedPins(part: Component): boolean {
  * Exposed metal is only called gold when the model saw a gold colour.
  * Silver-grey is tin (HASL), copper-coloured is bare copper. Pads of unclear colour are dropped;
  * edge fingers of unclear colour stay gold at low confidence because fingers are nearly always gold.
- * A reply without a finish (older format) is left as it was.
+ * A missing finish counts as unclear, so the safeguard fails closed.
  */
 export function applyFinish(part: Component): Component | null {
-  if (!GOLD_SURFACES.has(part.type) || !part.finish || part.finish === 'gold') return part;
+  if (!GOLD_SURFACES.has(part.type) || part.finish === 'gold') return part;
   if (part.finish === 'silver') return { ...part, type: 'tinned_pads' };
   if (part.finish === 'copper') return { ...part, type: 'copper_pads' };
   if (part.type === 'gold_fingers') return { ...part, confidence: 'low' };
@@ -179,6 +180,7 @@ export function mergeParts(components: Component[]): Group[] {
       count: Math.max(1, part.count ?? 1),
       confidence: part.confidence,
       markings: part.marking ? [part.marking] : [],
+      ...(part.finish ? { finish: part.finish } : {}),
       metals: part.type === 'other' && part.precious_metals.length > 0 ? [...part.precious_metals] : tinnedPins(part) ? [] : null,
       note: tinnedPins(part) ? 'Tin-plated pins. Not a gold source.' : null,
       review: part.review,
@@ -275,6 +277,7 @@ export function finalizeAnalysis(analysis: Analysis, options: { aspect?: number 
       note: group.note ?? (metals.includes('platinum') && group.type === 'other' ? 'Possible platinum-bearing part. Check it before sorting.' : rule.note),
       count: group.count,
       ...(marking ? { marking } : {}),
+      ...(group.finish ? { finish: group.finish } : {}),
       review: group.review,
     };
   });

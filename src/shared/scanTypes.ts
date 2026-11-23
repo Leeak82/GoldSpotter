@@ -59,10 +59,11 @@ export function detectionInstructions(types: ScanType[]): string {
   return lines.join('\n');
 }
 
-export function componentCategories(component: Pick<Component, 'type' | 'precious_metals'>): ScanType[] {
+export function componentCategories(component: Pick<Component, 'type' | 'precious_metals' | 'finish'>): ScanType[] {
   const metals = new Set<PreciousMetal>(component.precious_metals);
   const categories: ScanType[] = [];
-  if (GOLD_TYPES.has(component.type) || metals.has('gold') || (component.type === 'pin_connector' && (metals.has('gold') || metals.size === 0))) {
+  const tinnedPins = component.type === 'pin_connector' && (component.finish === 'silver' || component.finish === 'copper');
+  if (GOLD_TYPES.has(component.type) || metals.has('gold') || (component.type === 'pin_connector' && metals.size === 0 && !tinnedPins)) {
     categories.push('gold');
   }
   if (metals.has('silver')) categories.push('silver');
@@ -73,7 +74,7 @@ export function componentCategories(component: Pick<Component, 'type' | 'preciou
   return categories;
 }
 
-export function componentVisible(component: Pick<Component, 'type' | 'precious_metals'>, enabled: ScanType[]): boolean {
+export function componentVisible(component: Pick<Component, 'type' | 'precious_metals' | 'finish'>, enabled: ScanType[]): boolean {
   const active = new Set(enabled);
   return componentCategories(component).some((category) => active.has(category));
 }

@@ -414,7 +414,7 @@ export const RESPONSE_SCHEMA = {
           precious_metals: { type: 'array', items: { type: 'string', enum: ['gold', 'silver', 'palladium', 'platinum', 'tantalum'] } },
           confidence: { type: 'string', enum: ['low', 'medium', 'high'] },
         },
-        required: ['type', 'box_2d', 'confidence'],
+        required: ['type', 'box_2d', 'finish', 'confidence'],
         propertyOrdering: ['type', 'box_2d', 'finish', 'marking', 'count', 'precious_metals', 'confidence'],
       },
     },
