@@ -98,8 +98,8 @@ async function analyzeWithGemini(
       if (analysis.outcome === 'unknown' && resolution !== 'HIGH' && deadline - Date.now() > 1_000) {
         try {
           analysis = await interpretWithRetry((attempt) => callGemini(image, attempt, apiKey, model, types, 'HIGH', deadline));
-        } catch (error) {
-          if (!shouldAdvance(error)) throw error;
+        } catch {
+          // Keep the medium-resolution read if the sharper pass fails.
         }
       }
       return { ...analysis, provider: 'gemini', model };

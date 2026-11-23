@@ -38,6 +38,39 @@ test('default chain starts with the stable flash model', () => {
   ]);
 });
 
+test('keeps an unknown read when the sharper pass is rejected', async () => {
+  const calls: string[] = [];
+  const original = globalThis.fetch;
+  const unknown = JSON.stringify({
+    board_type: 'Unknown board',
+    outcome: 'unknown',
+    grade: '',
+    verdict: 'The picture is not clearly a circuit board.',
+    summary: 'Not enough of a board is visible.',
+    components: [],
+  });
+  globalThis.fetch = async (_url, init) => {
+    const body = JSON.parse(String(init && typeof init === 'object' && 'body' in init ? init.body : '{}')) as {
+      generationConfig?: { mediaResolution?: string };
+    };
+    calls.push(body.generationConfig?.mediaResolution ?? '');
+    if (calls.length === 1) {
+      return new Response(JSON.stringify({ candidates: [{ content: { parts: [{ text: unknown }] } }] }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
+    return new Response('bad request', { status: 400 });
+  };
+  try {
+    const value = await analyzeImage(image, { GEMINI_API_KEY: 'test-key' }, ['gold']);
+    assert.equal(value.outcome, 'unknown');
+    assert.deepEqual(calls, ['MEDIA_RESOLUTION_MEDIUM', 'MEDIA_RESOLUTION_HIGH']);
+  } finally {
+    globalThis.fetch = original;
+  }
+});
+
 test('uses the next model after Gemini returns 503', async () => {
   const calls: string[] = [];
   const original = globalThis.fetch;
