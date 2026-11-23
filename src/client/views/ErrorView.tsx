@@ -1,5 +1,7 @@
 export function ErrorView({ message, onRetry, onUpload }: { message: string; onRetry: () => void; onUpload: (file: File) => void }) {
-  const title = /not configured|API key|GEMINI|GROQ/i.test(message)
+  const title = /overloaded right now/i.test(message)
+    ? 'AI is busy'
+    : /not configured|API key|GEMINI|GROQ/i.test(message)
     ? 'Scanner is not configured'
     : /too many/i.test(message)
       ? 'Too many scans'

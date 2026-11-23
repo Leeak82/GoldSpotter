@@ -53,7 +53,7 @@ Box rules:
 
 Outcomes:
 - bad_photo: blurry, dark, glaring, too far to separate parts, or not a board. A close-up or a cropped region of a board is still valid. components []. grade "". retake_tips cover even light, low glare, focus, and getting close enough to see the parts.
-- unknown: not enough evidence to mark candidates. components [] or only parts you cannot judge, confidence low, grade "".
+- unknown: use only when the picture is not clearly a circuit board and is not bad_photo. If a board is visible but you are unsure about the metals, do not use unknown. Return outcome "candidates", list the visible parts, and set confidence to "low".
 - candidates: you can see enough to mark parts. Then set grade A to D. A is dense likely gold-bearing parts. B is a normal motherboard, GPU, or RAM stick. C is sparse. D is a real board with little precious-metal interest. Do not use D for a bad photo or for "I can't tell".
 
 recovery_tips are mechanical sorting only. Never describe acids or chemical refining.`;

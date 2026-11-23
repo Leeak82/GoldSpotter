@@ -1,0 +1,75 @@
+import assert from 'node:assert/strict';
+import { test } from 'node:test';
+import { analyzeImage, DEFAULT_GEMINI_FALLBACKS, DEFAULT_GEMINI_MODEL, geminiModelChain } from '../src/server/analyze';
+import type { PreparedImage } from '../src/server/image';
+
+const image: PreparedImage = {
+  mimeType: 'image/jpeg',
+  base64: 'abc',
+  buffer: Buffer.from('abc'),
+};
+
+const good = JSON.stringify({
+  board_type: 'Motherboard',
+  outcome: 'candidates',
+  grade: 'B',
+  verdict: 'Worth sorting the fingers and the slot connectors.',
+  summary: 'The edge fingers are the likely hotspot.',
+  recovery_tips: ['Bag the connectors separately.'],
+  components: [
+    {
+      label: 'PCIe fingers',
+      type: 'gold_fingers',
+      bbox: [0, 0.8, 0.4, 0.15],
+      precious_metals: ['gold'],
+      gold_level: 'medium',
+      confidence: 'medium',
+      why: 'Edge contacts are a likely gold-bearing row.',
+    },
+  ],
+});
+
+test('default chain starts with the stable flash model', () => {
+  assert.equal(DEFAULT_GEMINI_MODEL, 'gemini-3.6-flash');
+  assert.deepEqual(geminiModelChain({}), ['gemini-3.6-flash', ...DEFAULT_GEMINI_FALLBACKS.split(',')]);
+  assert.deepEqual(geminiModelChain({ GEMINI_MODEL: 'gemini-3.8-flash', GEMINI_FALLBACK_MODELS: 'gemini-3.6-flash' }), [
+    'gemini-3.8-flash',
+    'gemini-3.6-flash',
+  ]);
+});
+
+test('uses the next model after Gemini returns 503', async () => {
+  const calls: string[] = [];
+  const original = globalThis.fetch;
+  globalThis.fetch = async (url) => {
+    const href = String(url);
+    calls.push(href);
+    const model = href.includes('gemini-3.6-flash') ? 'gemini-3.6-flash' : 'gemini-3.5-flash-lite';
+    if (model === 'gemini-3.6-flash') {
+      return new Response('The model is overloaded. AIzaTESTKEY', { status: 503 });
+    }
+    return new Response(JSON.stringify({ candidates: [{ content: { parts: [{ text: good }] } }] }), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  };
+  const logs: string[] = [];
+  const originalError = console.error;
+  console.error = (...args: unknown[]) => {
+    logs.push(args.map(String).join(' '));
+  };
+  try {
+    const value = await analyzeImage(image, { GEMINI_API_KEY: 'test-key' }, ['gold']);
+    assert.equal(value.grade, 'B');
+    assert.equal(value.model, 'gemini-3.5-flash-lite');
+    assert.equal(calls.length, 2);
+    assert.match(calls[0], /models\/gemini-3\.6-flash:generateContent/);
+    assert.match(calls[1], /models\/gemini-3\.5-flash-lite:generateContent/);
+    assert.match(logs.join('\n'), /status=503 model=gemini-3\.6-flash/);
+    assert.match(logs.join('\n'), /overloaded/);
+    assert.doesNotMatch(logs.join('\n'), /AIzaTESTKEY/);
+  } finally {
+    globalThis.fetch = original;
+    console.error = originalError;
+  }
+});

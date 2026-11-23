@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { componentVisible, type ScanType } from '../shared/scanTypes';
 import type { Analysis, ReviewState } from '../shared/types';
 import { Logo } from './components/Logo';
-import { analyzePhoto } from './lib/api';
+import { analyzePhoto, isAiBusy } from './lib/api';
 import { compressImage } from './lib/compress';
 import {
   clearHistory,
@@ -58,6 +58,7 @@ export function App() {
   const [historyId, setHistoryId] = useState<string | null>(null);
   const [toast, setToast] = useState<string | null>(null);
   const [sharing, setSharing] = useState(false);
+  const [busyNote, setBusyNote] = useState<string | null>(null);
   const [scanTypes, setScanTypes] = useState<ScanType[]>(() => loadScanTypes());
   const [scannedTypes, setScannedTypes] = useState<ScanType[]>(() => loadScanTypes());
   const [typeHint, setTypeHint] = useState<string | null>(null);
@@ -134,6 +135,7 @@ export function App() {
     abortRef.current = controller;
     const sent = scanTypes;
     setError(null);
+    setBusyNote(null);
     setScreen('working');
     replace('/scan');
     const leaveIfCancelled = () => {
@@ -149,8 +151,9 @@ export function App() {
       setPreviewUrl(uploaded.dataUrl);
       const thumb = await compressImage(uploaded.blob, { maxEdge: 720, quality: 0.6, maxBytes: 160_000 });
       if (leaveIfCancelled()) return;
-      const result = await analyzePhoto(uploaded.base64, uploaded.mimeType, controller.signal, sent);
+      const result = await analyzeWithBusyRetry(uploaded.base64, uploaded.mimeType, controller.signal, sent);
       if (leaveIfCancelled()) return;
+      setBusyNote(null);
       setAnalysis(result);
       setScannedTypes(sent);
       const saved = saveHistory({ imageDataUrl: thumb.dataUrl, analysis: result, scanTypes: sent });
@@ -166,10 +169,40 @@ export function App() {
         replace('/');
         return;
       }
-      setError(caught instanceof Error ? caught.message : 'The scan failed.');
+      setBusyNote(null);
+      setError(isAiBusy(caught) ? 'The AI service is overloaded right now, not your photo. Try again in a minute.' : caught instanceof Error ? caught.message : 'The scan failed.');
       setScreen('error');
       replace('/');
     }
+  }
+
+  async function analyzeWithBusyRetry(base64: string, mimeType: string, signal: AbortSignal, sent: ScanType[]) {
+    try {
+      return await analyzePhoto(base64, mimeType, signal, sent);
+    } catch (error) {
+      if (!isAiBusy(error) || signal.aborted) throw error;
+      setBusyNote('AI is busy, retrying…');
+      await waitForRetry(signal);
+      return await analyzePhoto(base64, mimeType, signal, sent);
+    }
+  }
+
+  function waitForRetry(signal: AbortSignal): Promise<void> {
+    return new Promise((resolve, reject) => {
+      if (signal.aborted) {
+        reject(new DOMException('The scan was cancelled.', 'AbortError'));
+        return;
+      }
+      const timer = setTimeout(() => {
+        signal.removeEventListener('abort', onAbort);
+        resolve();
+      }, 3_000);
+      const onAbort = () => {
+        clearTimeout(timer);
+        reject(new DOMException('The scan was cancelled.', 'AbortError'));
+      };
+      signal.addEventListener('abort', onAbort, { once: true });
+    });
   }
 
   function releaseCrop() {
@@ -323,6 +356,7 @@ export function App() {
         {page === 'app' && screen === 'working' ? (
           <WorkingView
             imageUrl={previewUrl}
+            note={busyNote}
             onCancel={() => {
               abortRef.current?.abort();
             }}

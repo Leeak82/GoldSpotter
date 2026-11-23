@@ -62,13 +62,15 @@ test('does not retry a rejected API key', async () => {
   assert.equal(calls, 1);
 });
 
-test('retries a timeout once', async () => {
+test('does not retry a provider timeout', async () => {
   let calls = 0;
-  const value = await interpretWithRetry(async () => {
-    calls += 1;
-    if (calls === 1) throw new HttpError('The vision model timed out.', 504, 'timeout');
-    return good;
-  });
-  assert.equal(calls, 2);
-  assert.equal(value.board_type, 'Motherboard');
+  await assert.rejects(
+    () =>
+      interpretWithRetry(async () => {
+        calls += 1;
+        throw new HttpError('The vision model timed out.', 504, 'timeout');
+      }),
+    (error: unknown) => error instanceof HttpError && error.statusCode === 504,
+  );
+  assert.equal(calls, 1);
 });

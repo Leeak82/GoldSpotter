@@ -22,7 +22,7 @@ Live demo (after you deploy the Render service): [https://goldspotter.onrender.c
 
 1. You pick which part families to look for. At least one stays on.
 2. The photo is compressed on the device and posted to `POST /api/analyze`.
-3. The server asks Gemini (model from `GEMINI_MODEL`, default `gemini-3.8-flash`) for JSON only, and only for the enabled types. If Gemini fails and `GROQ_API_KEY` is set, it tries Groq once. No key returns a clear 503.
+3. The server asks Gemini for JSON only, and only for the enabled types. It starts with `GEMINI_MODEL` (default `gemini-3.6-flash`) and, on a 500, 503, 429, or timeout, waits briefly and tries the next id in `GEMINI_FALLBACK_MODELS`. If Gemini still fails and `GROQ_API_KEY` is set, it tries Groq once. No key returns a clear 503.
 4. Boxes are clamped into the frame. “Gold found,” dollar amounts, and weights are stripped. Unsafe refining tips are dropped.
 5. The result is ranked by value potential. That rank is a sorting guess, not a price.
 
@@ -60,7 +60,9 @@ Set these in the Render dashboard (`sync: false` in the blueprint so the dashboa
 | Variable | Purpose |
 | --- | --- |
 | `GEMINI_API_KEY` | Required for live scans |
-| `GEMINI_MODEL` | Optional. Default `gemini-3.8-flash`. `gemini-3.5-flash-lite` is the cheaper/faster option; `gemini-4-hydrogen` is stronger |
+| `GEMINI_MODEL` | Optional. Default `gemini-3.6-flash` |
+| `GEMINI_FALLBACK_MODELS` | Optional comma list used after the primary model is overloaded. Default `gemini-3.5-flash-lite,gemini-3.1-flash-lite` |
+| `GEMINI_MEDIA_RESOLUTION` | Optional `LOW`, `MEDIUM`, or `HIGH`. Default `MEDIUM`. An `unknown` read is tried once more at `HIGH` |
 | `GROQ_API_KEY` | Optional backup |
 | `GROQ_MODEL` | Optional. Default `qwen/qwen3.8-27b` |
 
