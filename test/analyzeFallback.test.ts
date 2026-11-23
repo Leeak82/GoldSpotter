@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
+import { isAiBusy, ScanError } from '../src/client/lib/api';
 import { analyzeImage, DEFAULT_GEMINI_FALLBACKS, DEFAULT_GEMINI_MODEL, geminiModelChain } from '../src/server/analyze';
 import type { PreparedImage } from '../src/server/image';
 
@@ -27,6 +28,12 @@ const good = JSON.stringify({
       why: 'Edge contacts are a likely gold-bearing row.',
     },
   ],
+});
+
+test('a missing API key is not treated as a busy AI', () => {
+  assert.equal(isAiBusy(new ScanError('Vision analysis is not configured.', 503, 'not_configured')), false);
+  assert.equal(isAiBusy(new ScanError('The vision service had an error.', 503, 'model_failed')), true);
+  assert.equal(isAiBusy(new ScanError('Too many scans from this connection.', 429, 'rate_limited')), false);
 });
 
 test('default chain starts with the stable flash model', () => {

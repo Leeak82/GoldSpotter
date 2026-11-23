@@ -20,7 +20,7 @@ export class ScanError extends Error {
 
 export function isAiBusy(error: unknown): boolean {
   if (!(error instanceof ScanError)) return false;
-  if (error.code === 'rate_limited') return false;
+  if (error.code === 'rate_limited' || error.code === 'not_configured') return false;
   return error.status === 503 || error.status === 504 || error.status === 429;
 }
 
