@@ -78,7 +78,9 @@ async function callGemini(
 
   if (response.status === 400) {
     const detail = await response.text();
-    if (/schema|unknown field|responseMimeType|not supported/i.test(detail)) {
+    const schemaRejected = /schema|responseMimeType|response_schema/i.test(detail);
+    const resolutionRejected = /media.?resolution|unknown field|not supported/i.test(detail);
+    if (schemaRejected || resolutionRejected) {
       response = await postJson(
         url,
         {
@@ -92,7 +94,7 @@ async function callGemini(
               ],
             },
           ],
-          generationConfig: generationConfig(false),
+          generationConfig: generationConfig(false, !resolutionRejected),
         },
         { 'x-goog-api-key': apiKey },
       );
@@ -117,12 +119,13 @@ async function callGemini(
   return text;
 }
 
-function generationConfig(withSchema: boolean): Record<string, unknown> {
+function generationConfig(withSchema: boolean, withResolution = true): Record<string, unknown> {
   const config: Record<string, unknown> = {
     temperature: 0.2,
     maxOutputTokens: 8192,
     responseMimeType: 'application/json',
   };
+  if (withResolution) config.mediaResolution = 'MEDIA_RESOLUTION_HIGH';
   if (withSchema) config.responseSchema = RESPONSE_SCHEMA;
   return config;
 }

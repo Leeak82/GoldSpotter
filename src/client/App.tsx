@@ -16,6 +16,7 @@ import {
 import { changeScanType, loadScanTypes } from './lib/preferences';
 import { buildShareCard, shareCard } from './lib/share';
 import { CameraView } from './views/CameraView';
+import { CropView } from './views/CropView';
 import { ErrorView } from './views/ErrorView';
 import { GuideView } from './views/GuideView';
 import { HistoryView } from './views/HistoryView';
@@ -27,7 +28,7 @@ import { WorkingView } from './views/WorkingView';
 const CONSENT_KEY = 'goldspotter.consent.v1';
 const SUPPORT_URL = 'https://buymeacoffee.com/anthonyleebuilds';
 
-type Screen = 'landing' | 'camera' | 'working' | 'results' | 'error';
+type Screen = 'landing' | 'camera' | 'crop' | 'working' | 'results' | 'error';
 
 function usePath() {
   const [path, setPath] = useState(() => window.location.pathname);
@@ -64,13 +65,16 @@ export function App() {
   const abortRef = useRef<AbortController | null>(null);
   const runRef = useRef(0);
   const pending = useRef<(() => void) | null>(null);
+  const cropUrlRef = useRef<string | null>(null);
+  const [cropUrl, setCropUrl] = useState<string | null>(null);
+  const [cropSource, setCropSource] = useState<Blob | null>(null);
 
   useEffect(() => {
     if (path === '/scan' && screen === 'landing') {
       if (localStorage.getItem(CONSENT_KEY) === 'yes') setScreen('camera');
       else replace('/');
     }
-    if (path !== '/scan' && screen === 'camera') setScreen('landing');
+    if (path !== '/scan' && (screen === 'camera' || screen === 'crop')) setScreen('landing');
   }, [path, screen, replace]);
 
   useEffect(() => {
@@ -140,7 +144,7 @@ export function App() {
       return true;
     };
     try {
-      const uploaded = await compressImage(file);
+      const uploaded = await compressImage(file, { maxEdge: 2048, quality: 0.9, maxBytes: 3_500_000 });
       if (leaveIfCancelled()) return;
       setPreviewUrl(uploaded.dataUrl);
       const thumb = await compressImage(uploaded.blob, { maxEdge: 720, quality: 0.6, maxBytes: 160_000 });
@@ -166,6 +170,31 @@ export function App() {
       setScreen('error');
       replace('/');
     }
+  }
+
+  function releaseCrop() {
+    if (cropUrlRef.current) URL.revokeObjectURL(cropUrlRef.current);
+    cropUrlRef.current = null;
+    setCropUrl(null);
+    setCropSource(null);
+  }
+
+  function stagePhoto(file: Blob) {
+    gate(() => {
+      releaseCrop();
+      const url = URL.createObjectURL(file);
+      cropUrlRef.current = url;
+      setCropUrl(url);
+      setCropSource(file);
+      setError(null);
+      setScreen('crop');
+      go('/scan');
+    });
+  }
+
+  function beginScan(file: Blob) {
+    releaseCrop();
+    void runFile(file);
   }
 
   function openCamera() {
@@ -222,10 +251,11 @@ export function App() {
 
   const page = path === '/guide' ? 'guide' : path === '/history' ? 'history' : path === '/settings' ? 'settings' : 'app';
   const cameraOpen = page === 'app' && screen === 'camera';
+  const immersive = cameraOpen || (page === 'app' && screen === 'crop');
 
   return (
     <>
-      {cameraOpen ? null : (
+      {immersive ? null : (
         <header className="top">
           <button type="button" className="brand" onClick={home}>
             <Logo />
@@ -273,11 +303,22 @@ export function App() {
             typeHint={typeHint}
             onToggleType={toggleType}
             onScan={openCamera}
-            onUpload={(file) => gate(() => void runFile(file))}
+            onUpload={stagePhoto}
           />
         ) : null}
         {page === 'app' && screen === 'camera' ? (
-          <CameraView onCapture={(blob) => void runFile(blob)} onClose={closeCamera} onUpload={(file) => void runFile(file)} />
+          <CameraView onCapture={stagePhoto} onClose={closeCamera} onUpload={stagePhoto} />
+        ) : null}
+        {page === 'app' && screen === 'crop' && cropUrl && cropSource ? (
+          <CropView
+            url={cropUrl}
+            onClose={() => {
+              releaseCrop();
+              home();
+            }}
+            onUseFull={() => beginScan(cropSource)}
+            onCrop={beginScan}
+          />
         ) : null}
         {page === 'app' && screen === 'working' ? (
           <WorkingView
@@ -305,11 +346,11 @@ export function App() {
           <ErrorView
             message={error ?? 'The scan failed.'}
             onRetry={openCamera}
-            onUpload={(file) => gate(() => void runFile(file))}
+            onUpload={stagePhoto}
           />
         ) : null}
       </main>
-      {cameraOpen ? null : (
+      {immersive ? null : (
         <footer className="foot">
           <p>Educational tool. The model can be wrong, and a photo is not an assay.</p>
           <a className="support" href={SUPPORT_URL} target="_blank" rel="noreferrer">
