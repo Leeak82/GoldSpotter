@@ -22,11 +22,16 @@ export const COMPONENT_TYPES = [
   'crystal_oscillator',
   'gold_plated_pads',
   'plated_through_hole',
+  'tinned_pads',
+  'copper_pads',
   'resistor',
   'inductor_diode',
   'other',
 ] as const;
 export type ComponentType = (typeof COMPONENT_TYPES)[number];
+
+export const FINISHES = ['gold', 'silver', 'copper', 'unclear'] as const;
+export type Finish = (typeof FINISHES)[number];
 
 export const CONFIDENCE_LEVELS = ['low', 'medium', 'high'] as const;
 export type ConfidenceLevel = (typeof CONFIDENCE_LEVELS)[number];
@@ -54,6 +59,8 @@ export type Component = {
   note: string;
   /** How many identical parts this box covers. 1 for a single part. */
   count?: number;
+  /** Colour of an exposed metal surface (pads, fingers, vias, pins) as the model saw it. */
+  finish?: Finish;
   /** Text printed on the part, such as 1R00 or 103, when readable. */
   marking?: string;
   /** Local only. The model does not set this. */
@@ -107,6 +114,8 @@ export const TYPE_LABELS: Record<ComponentType, string> = {
   crystal_oscillator: 'Crystal oscillator',
   gold_plated_pads: 'Gold-plated pads',
   plated_through_hole: 'Plated through-hole',
+  tinned_pads: 'Tinned pads (HASL)',
+  copper_pads: 'Bare copper pads',
   resistor: 'SMD resistor',
   inductor_diode: 'Inductor / diode',
   other: 'Other part',

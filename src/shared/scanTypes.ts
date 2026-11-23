@@ -44,7 +44,7 @@ export function detectionInstructions(types: ScanType[]): string {
   const lines: string[] = ['Only report part types for the groups that are on.'];
   if (types.includes('gold')) {
     lines.push(
-      'On — Gold: gold_fingers, gold_plated_pads (exposed gold-finish pads and vias), pin_connector, cpu_processor, ram_chip, qfp_chip, bga_chip, soic_chip, ic_chip.',
+      'On — Gold: gold_fingers, gold_plated_pads (exposed pads and vias that look gold-coloured only), pin_connector, cpu_processor, ram_chip, qfp_chip, bga_chip, soic_chip, ic_chip.',
     );
   }
   if (types.includes('silver')) lines.push('On — Silver: relay.');
@@ -52,7 +52,7 @@ export function detectionInstructions(types: ScanType[]): string {
   if (types.includes('platinum')) lines.push('On — Platinum: only a part you can clearly see that plausibly carries platinum, as type other with precious_metals ["platinum"].');
   if (types.includes('tantalum')) lines.push('On — Tantalum: tantalum_capacitor.');
   if (types.includes('all')) {
-    lines.push('On — All components: also report resistor, inductor_diode, crystal_oscillator, plated_through_hole and other visible parts.');
+    lines.push('On — All components: also report tinned_pads, copper_pads, resistor, inductor_diode, crystal_oscillator, plated_through_hole and other visible parts.');
   }
   const disabled = SCAN_TYPES.filter((type) => !types.includes(type)).map((type) => SCAN_LABELS[type].name);
   if (disabled.length > 0) lines.push(`Disabled, do not return these: ${disabled.join(', ')}.`);

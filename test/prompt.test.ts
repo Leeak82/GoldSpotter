@@ -20,6 +20,13 @@ test('asks for Gemini native boxes and no duplicates', () => {
 
 test('the user prompt asks for pads and small parts', () => {
   const prompt = userPrompt(0, ['gold', 'palladium', 'tantalum', 'all']);
-  assert.match(prompt, /gold-plated pads/);
+  assert.match(prompt, /gold, silver or copper/);
   assert.match(userPrompt(1, ['gold']), /0 to 1000/);
+});
+
+test('pads are only gold when they look gold', () => {
+  assert.match(SYSTEM_PROMPT, /- tinned_pads:/);
+  assert.match(SYSTEM_PROMPT, /HASL/);
+  assert.match(SYSTEM_PROMPT, /never call a pad, finger or via gold unless it is visibly gold/);
+  assert.match(SYSTEM_PROMPT, /"finish"/);
 });

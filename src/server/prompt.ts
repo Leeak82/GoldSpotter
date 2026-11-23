@@ -12,6 +12,7 @@ Return one JSON object and nothing else:
     {
       "type": one of the part types below,
       "box_2d": [ymin, xmin, ymax, xmax],
+      "finish": for exposed metal (pads, fingers, vias, pins) the colour you see: "gold" | "silver" | "copper" | "unclear"; for anything else "unclear",
       "marking": text printed on the part if you can read it, else "",
       "count": how many identical parts this box covers,
       "precious_metals": only for type other, the metals it plausibly carries (for example ["platinum"]), else [],
@@ -21,8 +22,10 @@ Return one JSON object and nothing else:
 }
 
 Part types. Decide from what the part looks like, not from where it sits:
-- gold_fingers: a row of flat gold contacts along a board edge.
-- gold_plated_pads: exposed flat pads, vias, test points or fingers with a gold-colored (ENIG) or bright plated finish, not covered by green solder mask and with no part soldered on them. Bare pads where a part is missing count. Always report these when you can see them; group a patch of them into one box.
+- gold_fingers: a row of flat contacts along a board edge that look gold or yellow.
+- gold_plated_pads: exposed flat pads, vias or test points that look clearly gold or yellow (ENIG), not covered by green solder mask. Only use this when the colour is gold. Group a patch into one box.
+- tinned_pads: the same kind of exposed pads when they look silver, grey or white. That is tin solder (HASL), not gold.
+- copper_pads: exposed pads that look orange-brown copper.
 - cpu_processor: a processor package (large, often with a metal lid or a ceramic body).
 - ram_chip: memory chips on a RAM module.
 - qfp_chip: a square or rectangular flat chip with gull-wing leads on all four sides.
@@ -35,6 +38,8 @@ Part types. Decide from what the part looks like, not from where it sits:
 - inductor_diode: a larger molded black block with two terminals, usually printed with letters (for example KVP), or a ferrite coil.
 - pin_connector: pin headers, sockets or slots.
 - relay, crystal_oscillator, plated_through_hole, other: as named.
+
+Colour rule: never call a pad, finger or via gold unless it is visibly gold or yellow. Bright silver or white metal is tin, even when it is shiny. Set finish to the colour you see.
 
 Box rules:
 - box_2d is [ymin, xmin, ymax, xmax] as integers on a 0 to 1000 grid over the whole image. 0,0 is the top-left corner.
@@ -54,5 +59,5 @@ export function userPrompt(attempt: number, types: ScanType[]): string {
       : '';
   return `${detectionInstructions(types)}
 
-Find every distinct part in this photo, including exposed gold-plated pads and the small parts, and box each one tightly. Return JSON only.${retry}`;
+Find every distinct part in this photo, including exposed pads (say whether they look gold, silver or copper) and the small parts, and box each one tightly. Return JSON only.${retry}`;
 }
