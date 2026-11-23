@@ -19,7 +19,6 @@ function PhotoFallback({ onUpload, prominent }: { onUpload: (file: File) => void
       <input
         type="file"
         accept="image/*"
-        capture="environment"
         onChange={(event) => {
           const file = event.target.files?.[0];
           event.currentTarget.value = '';
