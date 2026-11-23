@@ -63,6 +63,7 @@ export type Analysis = {
   components: Component[];
   disclaimer: string;
   provider?: 'gemini' | 'groq';
+  model?: string;
 };
 
 export type AnalysisFailure = {

@@ -6,6 +6,24 @@ type ErrorBody = {
   code?: string;
 };
 
+export class ScanError extends Error {
+  readonly status: number;
+  readonly code: string;
+
+  constructor(message: string, status: number, code = '') {
+    super(message);
+    this.name = 'ScanError';
+    this.status = status;
+    this.code = code;
+  }
+}
+
+export function isAiBusy(error: unknown): boolean {
+  if (!(error instanceof ScanError)) return false;
+  if (error.code === 'rate_limited' || error.code === 'not_configured') return false;
+  return error.status === 503 || error.status === 504 || error.status === 429;
+}
+
 export async function analyzePhoto(base64: string, mimeType: string, signal: AbortSignal, types: ScanType[]): Promise<Analysis> {
   let response: Response;
   try {
@@ -21,7 +39,7 @@ export async function analyzePhoto(base64: string, mimeType: string, signal: Abo
   }
   const payload = (await response.json().catch(() => ({}))) as ErrorBody & Partial<Analysis>;
   if (!response.ok) {
-    throw new Error(payload.error || 'The scan failed.');
+    throw new ScanError(payload.error || 'The scan failed.', response.status, payload.code ?? '');
   }
   if (!payload.outcome || !payload.verdict || !Array.isArray(payload.components)) {
     throw new Error('The scanner returned an incomplete result.');

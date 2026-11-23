@@ -5,7 +5,34 @@ import type { Analysis } from '../shared/types';
 import type { PreparedImage } from './image';
 import { SYSTEM_PROMPT, userPrompt } from './prompt';
 
-const TIMEOUT_MS = 45_000;
+const CALL_TIMEOUT_MS = 25_000;
+const OVERALL_TIMEOUT_MS = 75_000;
+
+export const DEFAULT_GEMINI_MODEL = 'gemini-3.6-flash';
+export const DEFAULT_GEMINI_FALLBACKS = 'gemini-3.5-flash-lite,gemini-3.1-flash-lite';
+
+type MediaLevel = 'LOW' | 'MEDIUM' | 'HIGH';
+
+export function geminiModelChain(env: NodeJS.ProcessEnv): string[] {
+  const primary = env.GEMINI_MODEL?.trim() || DEFAULT_GEMINI_MODEL;
+  const configured = env.GEMINI_FALLBACK_MODELS === undefined ? DEFAULT_GEMINI_FALLBACKS : env.GEMINI_FALLBACK_MODELS;
+  const names = [primary, ...configured.split(',')];
+  const seen = new Set<string>();
+  const chain: string[] = [];
+  for (const name of names) {
+    const model = name.trim();
+    if (!model || seen.has(model)) continue;
+    seen.add(model);
+    chain.push(model);
+  }
+  return chain;
+}
+
+function mediaLevel(env: NodeJS.ProcessEnv): MediaLevel {
+  const raw = env.GEMINI_MEDIA_RESOLUTION?.trim().toUpperCase();
+  if (raw === 'LOW' || raw === 'MEDIUM' || raw === 'HIGH') return raw;
+  return 'MEDIUM';
+}
 
 export async function analyzeImage(
   image: PreparedImage,
@@ -25,8 +52,7 @@ export async function analyzeImage(
   let geminiError: unknown;
   if (geminiKey) {
     try {
-      const value = await interpretWithRetry((attempt) => callGemini(image, attempt, geminiKey, env.GEMINI_MODEL, types));
-      return { ...value, provider: 'gemini' };
+      return await analyzeWithGemini(image, env, geminiKey, types);
     } catch (error) {
       geminiError = error;
       if (!groqKey) throw error;
@@ -36,7 +62,7 @@ export async function analyzeImage(
 
   try {
     const value = await interpretWithRetry((attempt) => callGroq(image, attempt, groqKey, env.GROQ_MODEL, types));
-    return { ...value, provider: 'groq' };
+    return { ...value, provider: 'groq', model: env.GROQ_MODEL?.trim() || 'qwen/qwen3.8-27b' };
   } catch (error) {
     if (geminiError) {
       throw new HttpError(
@@ -49,62 +75,92 @@ export async function analyzeImage(
   }
 }
 
+async function analyzeWithGemini(
+  image: PreparedImage,
+  env: NodeJS.ProcessEnv,
+  apiKey: string,
+  types: ScanType[],
+): Promise<Analysis> {
+  const deadline = Date.now() + OVERALL_TIMEOUT_MS;
+  const resolution = mediaLevel(env);
+  const models = geminiModelChain(env);
+  let lastError: unknown = new HttpError('The vision service had an error. Try the photo again.', 503, 'model_failed');
+  for (let index = 0; index < models.length; index += 1) {
+    if (Date.now() >= deadline) break;
+    if (index > 0) {
+      const wait = Math.min(backoffMs(index), deadline - Date.now());
+      if (wait <= 0) break;
+      await sleep(wait);
+    }
+    const model = models[index];
+    try {
+      let analysis = await interpretWithRetry((attempt) => callGemini(image, attempt, apiKey, model, types, resolution, deadline));
+      if (analysis.outcome === 'unknown' && resolution !== 'HIGH' && deadline - Date.now() > 1_000) {
+        try {
+          analysis = await interpretWithRetry((attempt) => callGemini(image, attempt, apiKey, model, types, 'HIGH', deadline));
+        } catch {
+          // Keep the medium-resolution read if the sharper pass fails.
+        }
+      }
+      return { ...analysis, provider: 'gemini', model };
+    } catch (error) {
+      lastError = error;
+      if (!shouldAdvance(error) || index === models.length - 1) throw error;
+    }
+  }
+  throw lastError;
+}
+
+function shouldAdvance(error: unknown): boolean {
+  return error instanceof HttpError && (error.statusCode === 429 || error.statusCode >= 500);
+}
+
+function backoffMs(step: number): number {
+  const base = step <= 1 ? 1_000 : 2_000;
+  return base + Math.floor(Math.random() * 200);
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 async function callGemini(
   image: PreparedImage,
   attempt: number,
   apiKey: string,
-  modelName: string | undefined,
+  model: string,
   types: ScanType[],
+  resolution: MediaLevel,
+  deadline: number,
 ): Promise<string> {
-  const model = modelName?.trim() || 'gemini-3.8-flash';
   const url = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`;
+  const timeout = Math.min(CALL_TIMEOUT_MS, deadline - Date.now());
   let response = await postJson(
     url,
-    {
-      systemInstruction: { parts: [{ text: SYSTEM_PROMPT }] },
-      contents: [
-        {
-          role: 'user',
-          parts: [
-            { text: userPrompt(attempt, types) },
-            { inlineData: { mimeType: image.mimeType, data: image.base64 } },
-          ],
-        },
-      ],
-      generationConfig: generationConfig(true),
-    },
+    geminiBody(image, attempt, types, generationConfig(true, resolution)),
     { 'x-goog-api-key': apiKey },
+    timeout,
   );
 
   if (response.status === 400) {
-    const detail = await response.text();
+    const detail = await geminiErrorBody(response, model);
     const schemaRejected = /schema|responseMimeType|response_schema/i.test(detail);
     const resolutionRejected = /media.?resolution|unknown field|not supported/i.test(detail);
     if (schemaRejected || resolutionRejected) {
       response = await postJson(
         url,
-        {
-          systemInstruction: { parts: [{ text: SYSTEM_PROMPT }] },
-          contents: [
-            {
-              role: 'user',
-              parts: [
-                { text: userPrompt(attempt, types) },
-                { inlineData: { mimeType: image.mimeType, data: image.base64 } },
-              ],
-            },
-          ],
-          generationConfig: generationConfig(false, !resolutionRejected),
-        },
+        geminiBody(image, attempt, types, generationConfig(false, resolutionRejected ? null : resolution)),
         { 'x-goog-api-key': apiKey },
+        Math.min(CALL_TIMEOUT_MS, deadline - Date.now()),
       );
     } else {
-      throw geminiStatus(response.status, detail);
+      throw geminiStatus(response.status);
     }
   }
 
   if (!response.ok) {
-    throw geminiStatus(response.status, await response.text());
+    await geminiErrorBody(response, model);
+    throw geminiStatus(response.status);
   }
   const payload = (await response.json()) as GeminiResponse;
   if (payload.promptFeedback?.blockReason) {
@@ -119,19 +175,40 @@ async function callGemini(
   return text;
 }
 
-function generationConfig(withSchema: boolean, withResolution = true): Record<string, unknown> {
+function geminiBody(image: PreparedImage, attempt: number, types: ScanType[], generationConfig: Record<string, unknown>) {
+  return {
+    systemInstruction: { parts: [{ text: SYSTEM_PROMPT }] },
+    contents: [
+      {
+        role: 'user',
+        parts: [
+          { text: userPrompt(attempt, types) },
+          { inlineData: { mimeType: image.mimeType, data: image.base64 } },
+        ],
+      },
+    ],
+    generationConfig,
+  };
+}
+
+function generationConfig(withSchema: boolean, resolution: MediaLevel | null): Record<string, unknown> {
   const config: Record<string, unknown> = {
     temperature: 0.2,
     maxOutputTokens: 8192,
     responseMimeType: 'application/json',
   };
-  if (withResolution) config.mediaResolution = 'MEDIA_RESOLUTION_HIGH';
+  if (resolution) config.mediaResolution = `MEDIA_RESOLUTION_${resolution}`;
   if (withSchema) config.responseSchema = RESPONSE_SCHEMA;
   return config;
 }
 
-function geminiStatus(status: number, detail: string): HttpError {
-  const clipped = detail.replace(/AIza[\w-]+/g, '[key]').slice(0, 240);
+async function geminiErrorBody(response: Response, model: string): Promise<string> {
+  const detail = (await response.text()).replace(/AIza[\w-]+/g, '[key]');
+  console.error(`[goldspotter] Gemini HTTP status=${response.status} model=${model} body=${detail.slice(0, 240)}`);
+  return detail;
+}
+
+function geminiStatus(status: number): HttpError {
   if (status === 401 || status === 403) {
     return new HttpError('The Gemini API key was rejected.', 401, 'not_configured');
   }
@@ -141,11 +218,13 @@ function geminiStatus(status: number, detail: string): HttpError {
   if (status === 429) {
     return new HttpError('The vision service is rate limiting requests. Try again shortly.', 429, 'model_failed');
   }
+  if (status === 504 || status === 408) {
+    return new HttpError('The vision model timed out. Try a clearer, closer photo.', 504, 'timeout');
+  }
   if (status >= 500) {
     return new HttpError('The vision service had an error. Try the photo again.', status, 'model_failed');
   }
-  console.error('[goldspotter] Gemini HTTP', status, clipped);
-  return new HttpError('The vision model rejected the photo. Try a clearer JPEG.', 502, 'model_failed');
+  return new HttpError('The vision model rejected the photo. Try a clearer JPEG.', status, 'model_failed');
 }
 
 async function callGroq(
@@ -197,9 +276,12 @@ async function callGroq(
   return text;
 }
 
-async function postJson(url: string, body: unknown, headers: Record<string, string>): Promise<Response> {
+async function postJson(url: string, body: unknown, headers: Record<string, string>, timeoutMs = CALL_TIMEOUT_MS): Promise<Response> {
+  if (timeoutMs <= 0) {
+    throw new HttpError('The vision model timed out. Try a clearer, closer photo.', 504, 'timeout');
+  }
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), TIMEOUT_MS);
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
     return await fetch(url, {
       method: 'POST',

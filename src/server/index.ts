@@ -55,7 +55,7 @@ app.post(
       const started = Date.now();
       const analysis = await analyzeImage(image, process.env, types);
       console.info(
-        `[goldspotter] analyzed provider=${analysis.provider} grade=${analysis.grade} parts=${analysis.components.length} ms=${Date.now() - started}`,
+        `[goldspotter] analyzed provider=${analysis.provider} model=${analysis.model ?? '-'} grade=${analysis.grade} parts=${analysis.components.length} ms=${Date.now() - started}`,
       );
       res.setHeader('Cache-Control', 'no-store');
       res.json(analysis);

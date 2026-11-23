@@ -15,5 +15,9 @@ services:
         sync: false
       - key: GEMINI_MODEL
         sync: false
+      - key: GEMINI_FALLBACK_MODELS
+        sync: false
+      - key: GEMINI_MEDIA_RESOLUTION
+        sync: false
       - key: GROQ_API_KEY
         sync: false
