@@ -14,17 +14,12 @@ type CompressOptions = {
 type Raster = ImageBitmap | HTMLImageElement;
 
 export async function compressImage(file: Blob, options: CompressOptions = {}): Promise<CompressedImage> {
-  const maxEdge = options.maxEdge ?? 1600;
-  const quality = options.quality ?? 0.82;
-  const maxBytes = options.maxBytes ?? 1_400_000;
+  const maxEdge = options.maxEdge ?? 2048;
+  const quality = options.quality ?? 0.9;
+  const maxBytes = options.maxBytes ?? 3_500_000;
   const source = await loadSource(file);
   try {
-    const passes: Array<[number, number]> = [
-      [maxEdge, quality],
-      [Math.min(maxEdge, 1280), Math.min(quality, 0.72)],
-      [Math.min(maxEdge, 960), 0.6],
-      [720, 0.52],
-    ];
+    const passes = compressionPasses(maxEdge, quality);
     let blob = await render(source, passes[0][0], passes[0][1]);
     for (const [edge, nextQuality] of passes.slice(1)) {
       if (blob.size <= maxBytes) break;
@@ -57,6 +52,18 @@ async function loadSource(file: Blob): Promise<Raster> {
   } finally {
     URL.revokeObjectURL(url);
   }
+}
+
+function compressionPasses(maxEdge: number, quality: number): Array<[number, number]> {
+  const steps: Array<[number, number]> = [
+    [maxEdge, quality],
+    [maxEdge, Math.min(quality, 0.82)],
+    [Math.min(maxEdge, 1600), Math.min(quality, 0.8)],
+    [Math.min(maxEdge, 1280), Math.min(quality, 0.72)],
+    [Math.min(maxEdge, 960), Math.min(quality, 0.64)],
+    [Math.min(maxEdge, 720), Math.min(quality, 0.52)],
+  ];
+  return steps.filter((step, index) => index === 0 || step[0] !== steps[index - 1][0] || step[1] !== steps[index - 1][1]);
 }
 
 function render(source: Raster, maxEdge: number, quality: number): Promise<Blob> {

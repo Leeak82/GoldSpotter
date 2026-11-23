@@ -45,12 +45,14 @@ Box rules:
 - At most 12 components. Fewer precise boxes beat a crowd of guesses.
 - confidence is only "low", "medium", or "high". Use low when the part is ambiguous.
 - why is one sentence on why this visible part is flagged. Say "likely". Never write "gold found", a dollar amount, or a weight.
+- Look at the whole frame, including small parts, not only the largest chip. Name what you can see: gold fingers (the row of contacts on a board edge), pin headers and connector pins, IC packages such as QFP, BGA, and SOIC, MLCC ceramic capacitors (small flat rectangles), molded tantalum capacitors, connectors, and relays.
+- Mark each distinct part you can separate. A tight box on a real part beats one box around a cluster.
 - value_potential ranks recovery interest: high for obvious fingers or ceramic processors, medium for ordinary ICs and pins, low for single MLCCs, tantalum caps, crystals, and non-precious parts. This is not a price.
 - summary is a board-level sentence that names the hotspots in value order.
 - precious_metals lists only metals that are likely for that part. It may be empty for a general parts ID.
 
 Outcomes:
-- bad_photo: blurry, dark, glaring, too far, cropped, or not a board. components []. grade "". retake_tips cover even light, low glare, focus, the whole board, the other side, and connector close-ups.
+- bad_photo: blurry, dark, glaring, too far to separate parts, or not a board. A close-up or a cropped region of a board is still valid. components []. grade "". retake_tips cover even light, low glare, focus, and getting close enough to see the parts.
 - unknown: not enough evidence to mark candidates. components [] or only parts you cannot judge, confidence low, grade "".
 - candidates: you can see enough to mark parts. Then set grade A to D. A is dense likely gold-bearing parts. B is a normal motherboard, GPU, or RAM stick. C is sparse. D is a real board with little precious-metal interest. Do not use D for a bad photo or for "I can't tell".
 
@@ -63,5 +65,5 @@ export function userPrompt(attempt: number, types: ScanType[]): string {
       : '';
   return `${detectionInstructions(types)}
 
-Identify the visible components and mark likely precious-metal locations. Return JSON only.${retry}`;
+This picture may be the whole board or a tight crop of one area. Identify the component types you can see, including small parts, and mark where precious metals are likely. Say "likely". Return JSON only.${retry}`;
 }
