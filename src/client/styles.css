@@ -488,3 +488,5 @@ body:has(.cropper) {
 .tally i { width: 10px; height: 10px; border-radius: 50%; display: inline-block; }
 .how-to-read { margin-top: 12px; color: var(--muted); font-size: 0.85rem; }
 .how-to-read summary { cursor: pointer; }
+.scan-progress { height: 6px; border-radius: 999px; background: rgba(255, 255, 255, 0.08); overflow: hidden; margin: 14px 0 6px; }
+.scan-progress span { display: block; height: 100%; background: var(--gold-2, #e7c27a); transition: width 1s linear; }

@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { componentVisible, type ScanType } from '../shared/scanTypes';
 import type { Analysis, ReviewState } from '../shared/types';
 import { Logo } from './components/Logo';
-import { analyzePhoto, isAiBusy } from './lib/api';
+import { analyzePhoto, isAiBusy, ScanError } from './lib/api';
 import { compressImage } from './lib/compress';
 import {
   clearHistory,
@@ -24,6 +24,8 @@ import { HomeView } from './views/HomeView';
 import { ResultsView } from './views/ResultsView';
 import { SettingsView } from './views/SettingsView';
 import { WorkingView } from './views/WorkingView';
+
+const CLIENT_SCAN_TIMEOUT_MS = 130_000;
 
 const CONSENT_KEY = 'goldspotter.consent.v1';
 const SUPPORT_URL = 'https://buymeacoffee.com/anthonyleebuilds';
@@ -133,6 +135,12 @@ export function App() {
     abortRef.current?.abort();
     const controller = new AbortController();
     abortRef.current = controller;
+    // The server gives up after about 95 seconds; this only catches a dead connection.
+    let timedOut = false;
+    const safety = window.setTimeout(() => {
+      timedOut = true;
+      controller.abort();
+    }, CLIENT_SCAN_TIMEOUT_MS);
     const sent = scanTypes;
     setError(null);
     setBusyNote(null);
@@ -140,7 +148,7 @@ export function App() {
     replace('/scan');
     const leaveIfCancelled = () => {
       if (id !== runRef.current) return true;
-      if (!controller.signal.aborted) return false;
+      if (!controller.signal.aborted || timedOut) return false;
       setScreen('landing');
       replace('/');
       return true;
@@ -164,6 +172,13 @@ export function App() {
       if (!saved) setToast('Scan finished. This browser could not keep it in history.');
     } catch (caught) {
       if (id !== runRef.current) return;
+      if (timedOut) {
+        setBusyNote(null);
+        setError('The scan took too long. Check your connection and try again.');
+        setScreen('error');
+        replace('/');
+        return;
+      }
       if (caught instanceof DOMException && caught.name === 'AbortError') {
         setScreen('landing');
         replace('/');
@@ -173,6 +188,8 @@ export function App() {
       setError(isAiBusy(caught) ? 'The AI service is overloaded right now, not your photo. Try again in a minute.' : caught instanceof Error ? caught.message : 'The scan failed.');
       setScreen('error');
       replace('/');
+    } finally {
+      window.clearTimeout(safety);
     }
   }
 
@@ -180,7 +197,8 @@ export function App() {
     try {
       return await analyzePhoto(base64, mimeType, signal, sent);
     } catch (error) {
-      if (!isAiBusy(error) || signal.aborted) throw error;
+      // A 504 means the server already spent its whole time budget, so a second full wait would not help.
+      if (!isAiBusy(error) || signal.aborted || (error instanceof ScanError && error.status === 504)) throw error;
       setBusyNote('AI is busy, retrying…');
       await waitForRetry(signal);
       return await analyzePhoto(base64, mimeType, signal, sent);
