@@ -103,7 +103,6 @@ export function mergeParts(components: Component[]): Group[] {
   const sorted = [...components].sort((a, b) => a.bbox[1] - b.bbox[1] || a.bbox[0] - b.bbox[0]);
   const groups: Group[] = [];
   for (const part of sorted) {
-    const rule = PART_RULES[part.type];
     const group: Group = {
       type: part.type,
       bbox: part.bbox,
@@ -124,7 +123,7 @@ export function mergeParts(components: Component[]): Group[] {
           if (a.type !== b.type) continue;
           const duplicate = iou(a.bbox, b.bbox) > 0.3 || containment(a.bbox, b.bbox) > 0.7;
           const merged = unionBox(a.bbox, b.bbox);
-          const cluster = rule.cluster && neighbours(a.bbox, b.bbox) && merged[2] * merged[3] <= MAX_CLUSTER_AREA;
+          const cluster = PART_RULES[a.type].cluster && neighbours(a.bbox, b.bbox) && merged[2] * merged[3] <= MAX_CLUSTER_AREA;
           if (!duplicate && !cluster) continue;
           b.bbox = merged;
           b.count = duplicate ? Math.max(a.count, b.count) : a.count + b.count;

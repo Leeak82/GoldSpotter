@@ -122,3 +122,14 @@ test('a reply in the new schema validates and finalizes', () => {
   assert.equal(out.components[1].label, 'SMD resistor (1R00)');
   assert.ok(out.grade);
 });
+
+test('clustering follows each group type, not the part that was just added', () => {
+  const groups = mergeParts([
+    part({ type: 'resistor', bbox: [0.6, 0.40, 0.07, 0.06] }),
+    part({ type: 'resistor', bbox: [0.6, 0.48, 0.07, 0.06] }),
+    part({ type: 'qfp_chip', bbox: [0.1, 0.5, 0.2, 0.2] }),
+    part({ type: 'qfp_chip', bbox: [0.32, 0.5, 0.2, 0.2] }),
+  ]);
+  assert.equal(groups.filter((group) => group.type === 'resistor').length, 1);
+  assert.equal(groups.filter((group) => group.type === 'qfp_chip').length, 2);
+});
