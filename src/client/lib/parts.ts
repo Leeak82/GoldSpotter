@@ -5,13 +5,10 @@ import {
   type Component,
   type ConfidenceLevel,
   type PreciousMetal,
-  type ValuePotential,
 } from '../../shared/types';
 
 export type MarkedPart = Component & { id: string };
 
-const VALUE_ORDER: Record<ValuePotential, number> = { high: 0, medium: 1, low: 2 };
-const CONFIDENCE_ORDER: Record<ConfidenceLevel, number> = { high: 0, medium: 1, low: 2 };
 const METAL_PRIORITY: PreciousMetal[] = ['gold', 'platinum', 'palladium', 'silver', 'tantalum'];
 
 export function markParts(components: Component[]): MarkedPart[] {
@@ -19,13 +16,8 @@ export function markParts(components: Component[]): MarkedPart[] {
 }
 
 export function visibleParts(components: Component[], enabled: ScanType[]): MarkedPart[] {
-  return markParts(components)
-    .filter((part) => componentVisible(part, enabled))
-    .sort(
-      (a, b) =>
-        VALUE_ORDER[a.value_potential] - VALUE_ORDER[b.value_potential] ||
-        CONFIDENCE_ORDER[a.confidence] - CONFIDENCE_ORDER[b.confidence],
-    );
+  // The server already returns parts in a fixed value order; keep it so numbers match every time.
+  return markParts(components).filter((part) => componentVisible(part, enabled));
 }
 
 export function primaryMetal(part: Pick<Component, 'precious_metals'>): PreciousMetal | null {

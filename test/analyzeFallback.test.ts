@@ -1,7 +1,15 @@
 import assert from 'node:assert/strict';
-import { test } from 'node:test';
+import { beforeEach, test } from 'node:test';
 import { isAiBusy, ScanError } from '../src/client/lib/api';
-import { analyzeImage, DEFAULT_GEMINI_FALLBACKS, DEFAULT_GEMINI_MODEL, geminiModelChain } from '../src/server/analyze';
+import {
+  analyzeImage,
+  clearResultCache,
+  DEFAULT_GEMINI_FALLBACKS,
+  DEFAULT_GEMINI_MODEL,
+  geminiModelChain,
+  resetModelCooldowns,
+  RESPONSE_SCHEMA,
+} from '../src/server/analyze';
 import type { PreparedImage } from '../src/server/image';
 
 const image: PreparedImage = {
@@ -30,6 +38,11 @@ const good = JSON.stringify({
   ],
 });
 
+beforeEach(() => {
+  clearResultCache();
+  resetModelCooldowns();
+});
+
 test('a missing API key is not treated as a busy AI', () => {
   assert.equal(isAiBusy(new ScanError('Vision analysis is not configured.', 503, 'not_configured')), false);
   assert.equal(isAiBusy(new ScanError('The vision service had an error.', 503, 'model_failed')), true);
@@ -43,6 +56,8 @@ test('default chain starts with the stable flash model', () => {
     'gemini-3.8-flash',
     'gemini-3.6-flash',
   ]);
+  // An override still keeps the full flash model ahead of the lite fallbacks.
+  assert.deepEqual(geminiModelChain({ GEMINI_MODEL: 'gemini-3.8-flash' }), ['gemini-3.8-flash', 'gemini-3.6-flash', ...DEFAULT_GEMINI_FALLBACKS.split(',')]);
 });
 
 test('keeps an unknown read when the sharper pass is rejected', async () => {
@@ -108,6 +123,72 @@ test('uses the next model after Gemini returns 503', async () => {
     assert.match(logs.join('\n'), /status=503 model=gemini-3\.6-flash/);
     assert.match(logs.join('\n'), /overloaded/);
     assert.doesNotMatch(logs.join('\n'), /AIzaTESTKEY/);
+  } finally {
+    globalThis.fetch = original;
+    console.error = originalError;
+  }
+});
+
+test('the response schema has no empty enum values', () => {
+  const walk = (node: unknown): void => {
+    if (!node || typeof node !== 'object') return;
+    const record = node as Record<string, unknown>;
+    if (Array.isArray(record.enum)) {
+      for (const value of record.enum) assert.notEqual(value, '', 'Gemini rejects an empty enum value');
+    }
+    for (const value of Object.values(record)) walk(value);
+  };
+  walk(RESPONSE_SCHEMA);
+});
+
+test('sends temperature 0 and the schema, and reuses the read for the same photo', async () => {
+  let calls = 0;
+  let sent: Record<string, unknown> = {};
+  const original = globalThis.fetch;
+  globalThis.fetch = async (_url, init) => {
+    calls += 1;
+    sent = JSON.parse(String(init && typeof init === 'object' && 'body' in init ? init.body : '{}')).generationConfig;
+    return new Response(JSON.stringify({ candidates: [{ content: { parts: [{ text: good }] } }] }), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  };
+  try {
+    const first = await analyzeImage(image, { GEMINI_API_KEY: 'test-key' }, ['gold']);
+    const second = await analyzeImage(image, { GEMINI_API_KEY: 'test-key' }, ['gold']);
+    assert.equal(calls, 1);
+    assert.deepEqual(second, first);
+    assert.equal(sent.temperature, 0);
+    assert.ok(sent.responseSchema);
+    await analyzeImage(image, { GEMINI_API_KEY: 'test-key' }, ['gold'], { fresh: true });
+    assert.equal(calls, 2);
+  } finally {
+    globalThis.fetch = original;
+  }
+});
+
+test('skips a model that ran out of quota on the next scan', async () => {
+  const calls: string[] = [];
+  const original = globalThis.fetch;
+  globalThis.fetch = async (url) => {
+    const href = String(url);
+    calls.push(href);
+    if (href.includes('gemini-3.8-flash')) return new Response('quota', { status: 429 });
+    return new Response(JSON.stringify({ candidates: [{ content: { parts: [{ text: good }] } }] }), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  };
+  const originalError = console.error;
+  console.error = () => {};
+  try {
+    const env = { GEMINI_API_KEY: 'test-key', GEMINI_MODEL: 'gemini-3.8-flash' };
+    const first = await analyzeImage(image, env, ['gold']);
+    assert.equal(first.model, 'gemini-3.6-flash');
+    calls.length = 0;
+    await analyzeImage(image, env, ['gold'], { fresh: true });
+    assert.equal(calls.length, 1);
+    assert.match(calls[0], /gemini-3\.6-flash/);
   } finally {
     globalThis.fetch = original;
     console.error = originalError;

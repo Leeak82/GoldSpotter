@@ -53,9 +53,10 @@ app.post(
         return;
       }
       const started = Date.now();
-      const analysis = await analyzeImage(image, process.env, types);
+      const fresh = req.get('x-goldspotter-fresh') === '1';
+      const analysis = await analyzeImage(image, process.env, types, { fresh });
       console.info(
-        `[goldspotter] analyzed provider=${analysis.provider} model=${analysis.model ?? '-'} grade=${analysis.grade} parts=${analysis.components.length} ms=${Date.now() - started}`,
+        `[goldspotter] analyzed fresh=${fresh} provider=${analysis.provider} model=${analysis.model ?? '-'} grade=${analysis.grade} parts=${analysis.components.length} ms=${Date.now() - started}`,
       );
       res.setHeader('Cache-Control', 'no-store');
       res.json(analysis);

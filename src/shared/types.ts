@@ -13,12 +13,17 @@ export const COMPONENT_TYPES = [
   'gold_fingers',
   'pin_connector',
   'ic_chip',
+  'qfp_chip',
+  'bga_chip',
+  'soic_chip',
   'mlcc',
   'tantalum_capacitor',
   'relay',
   'crystal_oscillator',
   'gold_plated_pads',
   'plated_through_hole',
+  'resistor',
+  'inductor_diode',
   'other',
 ] as const;
 export type ComponentType = (typeof COMPONENT_TYPES)[number];
@@ -47,6 +52,10 @@ export type Component = {
   confidence: ConfidenceLevel;
   /** Why this visible part was flagged. Likely-worded, not a confirmed find. */
   note: string;
+  /** How many identical parts this box covers. 1 for a single part. */
+  count?: number;
+  /** Text printed on the part, such as 1R00 or 103, when readable. */
+  marking?: string;
   /** Local only. The model does not set this. */
   review: ReviewState;
 };
@@ -88,13 +97,18 @@ export const TYPE_LABELS: Record<ComponentType, string> = {
   ram_chip: 'RAM chip',
   gold_fingers: 'Gold-finger edge connector',
   pin_connector: 'Pin connector',
-  ic_chip: 'IC / QFP / BGA',
+  ic_chip: 'IC chip',
+  qfp_chip: 'QFP chip',
+  bga_chip: 'BGA chip',
+  soic_chip: 'SOIC chip',
   mlcc: 'MLCC ceramic capacitor',
   tantalum_capacitor: 'Tantalum capacitor',
   relay: 'Relay contacts',
   crystal_oscillator: 'Crystal oscillator',
   gold_plated_pads: 'Gold-plated pads',
   plated_through_hole: 'Plated through-hole',
+  resistor: 'SMD resistor',
+  inductor_diode: 'Inductor / diode',
   other: 'Other part',
 };
 

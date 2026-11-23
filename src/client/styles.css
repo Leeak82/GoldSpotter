@@ -356,18 +356,17 @@ body:has(.cropper) {
 .boxes { position: absolute; inset: 0; width: 100%; height: 100%; }
 .marker {
   position: absolute;
-  transform: translateY(-110%);
-  display: flex;
-  align-items: center;
-  gap: 6px;
+  display: grid;
+  place-items: center;
   border: 0;
-  border-radius: 999px;
-  padding: 2px 8px 2px 6px;
-  font-size: 12px;
-  font-weight: 600;
-  max-width: 46%;
+  border-radius: 50%;
+  padding: 0;
+  font-size: 13px;
+  font-weight: 700;
+  color: #1a1206;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.55);
+  cursor: pointer;
 }
-.marker-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .marker.is-rejected { opacity: 0.45; }
 .marker.is-selected { outline: 2px solid #fff; }
 .legend { display: flex; flex-wrap: wrap; gap: 12px; color: var(--muted); font-size: 0.85rem; margin-top: 10px; }
@@ -483,3 +482,9 @@ body:has(.cropper) {
 @media (prefers-reduced-motion: reduce) {
   .scanline, .rise { animation: none; }
 }
+
+.tally { display: flex; flex-wrap: wrap; gap: 8px; margin: 12px 0 4px; padding: 0; list-style: none; }
+.tally li { display: flex; align-items: center; gap: 6px; padding: 4px 10px; border-radius: 999px; background: rgba(255, 255, 255, 0.06); font-size: 0.85rem; font-weight: 600; }
+.tally i { width: 10px; height: 10px; border-radius: 50%; display: inline-block; }
+.how-to-read { margin-top: 12px; color: var(--muted); font-size: 0.85rem; }
+.how-to-read summary { cursor: pointer; }
